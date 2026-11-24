@@ -10,5 +10,5 @@ T="$ROOT/build/t/$N"; mkdir -p "$T/home"
 S=""; for t in ${SHOTS//,/ }; do S="$S${S:+,}${t}:shot"; done
 cd "$T/home"
 HOME="$T/home" NFSU2_GAME_DIR="$T/game" NFSU2_SMOKE_SECONDS="$SECS" NFSU2_OVERLAY_SHOT="$T/shot" \
-  NFSU2_OVERLAY_SCRIPT="${NFSU2_OVERLAY_SCRIPT:-$S}" "$ROOT/build/release/hppoa_recomp" > "$T/run.log" 2>&1
+  NFSU2_OVERLAY_SCRIPT="${NFSU2_OVERLAY_SCRIPT:-$S}" "${HPPOA_BIN:-$ROOT/build/release/hppoa_recomp}" > "$T/run.log" 2>&1
 echo "rc=$? log=$T/run.log"

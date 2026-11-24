@@ -453,6 +453,58 @@ void sub_00115390(void)
     sub_00115390_gen();
 }
 
+/* Dev: HPPOA_MOVE_LOG=scan lists the player object's floats (+0..+0x800) that changed in the last second;
+ * HPPOA_MOVE_LOG=1 logs a [move] line a tick: game ms, step, the left stick as the game sees it (pad 0's
+ * floats at 0x3C5BC0/4) and the player's position (+0x4EC x, +0x4F0 y, +0x4F4 z; HPPOA_MOVE_POS=<hex> another). The player: the character table [0x3660C8], player 0's
+ * handle at +0xE6, the object at [0x3BDCF0 + handle*4] (HP-POA's hle_trainer.c, MIT; facts only). */
+#define CHAR_TABLE  0x003660C8u
+#define OBJ_HANDLES 0x003BDCF0u
+static uint32_t player_obj(void)
+{
+    uint32_t tab = MEM32(CHAR_TABLE), h, o;
+    if ((tab & 0x7FFFFFFFu) < 0x10000u || (tab & 0x7FFFFFFFu) > 0x3FF0000u) return 0;
+    h = MEM16(tab + 0xE6);
+    if (!h || h >= 0x1000u) return 0;
+    o = MEM32(OBJ_HANDLES + h * 4u);
+    return (o & 0x7FFFFFFFu) >= 0x10000u && (o & 0x7FFFFFFFu) < 0x3FF0000u ? o : 0;   /* also 0x8xxxxxxx */
+}
+static void move_log(uint32_t clk, uint32_t before)
+{
+    static int mode = -1;
+    if (mode < 0) {
+        const char *e = getenv("HPPOA_MOVE_LOG");
+        mode = !e || !*e ? 0 : strcmp(e, "scan") == 0 ? 2 : 1;
+    }
+    if (!mode) return;
+    uint32_t o = player_obj();
+    if (!o) return;
+    if (mode == 2) {
+        static float last[512]; static uint32_t last_o; static uint64_t t0;
+        uint64_t now = mono_ms();
+        if (now - t0 < 1000u) return;
+        t0 = now;
+        fprintf(stderr, "[move] obj %08X game %u:", o, MEM32(clk + 4));
+        for (uint32_t i = 0; i < 512; i++) {
+            float f; uint32_t u = MEM32(o + i * 4u); memcpy(&f, &u, 4);
+            if (o == last_o && f != last[i] && f == f && fabsf(f) > 1e-3f && fabsf(f) < 1e5f)
+                fprintf(stderr, " +%X=%.2f", i * 4u, f);
+            last[i] = f;
+        }
+        last_o = o;
+        fprintf(stderr, "\n");
+        return;
+    }
+    {
+        static int off = -1;
+        float v[6]; uint32_t u;
+        if (off < 0) { const char *e = getenv("HPPOA_MOVE_POS"); off = e ? (int)strtol(e, NULL, 16) : 0x4EC; }
+        for (int k = 0; k < 2; k++) { u = MEM32(0x3C5BC0u + 4u * k); memcpy(&v[k], &u, 4); }
+        for (int k = 0; k < 3; k++) { u = MEM32(o + (uint32_t)off + 4u * k); memcpy(&v[2 + k], &u, 4); }
+        fprintf(stderr, "[move] game %u step %u wall %llu stick %.3f %.3f pos %.3f %.3f %.3f\n", MEM32(clk + 4),
+                MEM32(clk + 4) - before, (unsigned long long)mono_ms(), v[0], v[1], v[2], v[3], v[4]);
+    }
+}
+
 extern void sub_001A7450_gen(void);
 void sub_001A7450(void)
 {
@@ -467,6 +519,7 @@ void sub_001A7450(void)
     cutscene_watch();
     before = MEM32(clk + 4);
     sub_001A7450_gen();
+    move_log(clk, before);
     if (log < 0) { const char *e = getenv("HPPOA_CLOCK_LOG"); log = e ? atoi(e) : 0; }
     if (!log) return;
     for (k = 0; k < 4 && callers[k] && callers[k] != caller; k++) {}

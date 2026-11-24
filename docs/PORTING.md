@@ -207,7 +207,67 @@ New Game, the Hogwarts Express cutscene, the corridor, the luggage car and the F
    2500-4800 of the train route (860,489 draws) and 1,100 frames of the dormitory (498,938 draws) has only triangle strips
    (prim 6); no line draw was found to test a fix against.
 
-## 1d. Performance: shader compile stalls (play test 1, issue 3)
+## 1d. Play test 1 fixes (2026-11-24, `.wt/PLAYTEST1.md`)
+
+1. **#7 Dormitory trunk: Harry searches it forever.** Symptom (recording 20.21.09 at 5:15-6:00, and again after Load Game):
+   A at the red "H.P." trunk, Harry opens it and stays bent over it; no card, no next step. The owner's `build/play/last.log`:
+   2,464 `[ICALL] Failed to resolve VA 0x000B6170`, the first in the frame A was pressed, then one per frame (call site
+   `sub_000BB670`, return `0xBB635`), plus one `0x000B97B0` on the train (from `sub_000B7870`). Root cause: both are member
+   functions the static pass never found. Their only reference is a static initializer that fills a state table
+   (`0x260764`: `mov eax, 0xB6170; mov [0x2FE5A0], eax`; state `0x1F`'s slots at `0x2FE590`), an immediate in code, not a
+   data dword, so neither the call graph nor the data-pointer scan saw them. The ICALL miss returns without running the
+   state's update, so the search state never ends. Fix: `tools/immscan.py` (new: `push imm32`/`mov eax, imm32` pointing at
+   code after `int3`/`ret` padding that is no function start) listed 8; all real code by `seedcheck.py`, all seeded
+   (94 seeds): `0xB3AC0`, `0xB6170`, `0xB67A0`, `0xB97B0`, `0xF9AE0` (state-table member functions), `0xB9390` (after
+   padding inside `0xB9306`'s span), `0x1915C0` (callback pushed at `0x1922AF`), `0x26E140` (D3D callback stored at
+   `0x26F02A`). Relift: 21,754 functions, stubcheck 32 stubs, 0 real code; `immscan` now lists only 4 non-code hits
+   (`0x4003D`, `0x8C25D`: int3 runs inside data immediates; `0x292638`: a string; `0x2A80BA`: an SEH label). Evidence: the same
+   scripted run (`build/t/trunk_script.txt`, `HPPOA_START_CHAPTER=1`, walk to the trunk spamming A) on d6c6489: Harry stuck
+   bent over the open trunk from 106 s to the end at 130 s, 763 `0xB6170` misses; with the seeds: he takes a collector's card
+   out, the hint "Complete collector's card sets for extra rewards" shows, play goes on, 0 ICALL misses
+   (`build/t/t7old`, `build/t/t7new`). `tools/run_test.sh` takes `HPPOA_BIN=<binary>` for such A/B runs.
+   Backport candidate: run `tools/immscan.py` on every Xbox port (NFSU1, NFSU2, HP1, CoS): any "free" hit is a silent
+   `[ICALL]` miss waiting for its state.
+
+2. **#5 Handling "not smooth enough".** Measured (`HPPOA_MOVE_LOG=1`, new: a `[move]` line a tick with game ms, step, the
+   stick as the game sees it and Harry's position at player `+0x4EC`; `=scan` lists the player's changing floats; the
+   player is player 0's handle in the character table `[0x3660C8]+0xE6`, object `[0x3BDCF0 + handle*4]`):
+   - Game side: the poll `sub_00229F90` turns each axis into `(v + 0.5) / 32767.5` and zeroes it under 0.25 per axis
+     (`0x2ED468`); the rest drift in the owner's log (LX -594, LY 2174 = 0.02/0.07) never reaches the game. Triggers: an
+     analog button counts as held above 1 (`cmp dl,1; seta`), ours are 0..255 (SDL >> 7): fine.
+   - 30 vs 60 fps, same scripted walk from the dormitory start (`build/t/mv30`, `mv60`, `build/t/move_script.txt`): the
+     steps are 33/34 ms and 16/17 ms with no stray ticks while walking; Harry moves a fixed 19.55 units a tick at 30 and
+     9.78 at 60, i.e. the same 575-611 units per game second, starts moving 0.3-0.4 s after the push at both, and the
+     motion per displayed frame is even. No frame-rate dependence found in walking speed or start-up. Input is fresh:
+     XInputGetState reads SDL's state each call, and the main thread's event wait pumps the pads (SDL 3's periodic
+     poll while joysticks are open).
+   - **Defect: the stick range compensation.** `stick_range` (from CoS) made a push to 65 % read as full on every pad.
+     In the owner's play log 92 % of the 7,212 moving stick readings were at full magnitude: the game's walk band
+     (its 0.35 dead zone up to the run at 0.675, per HP-POA-Xbox-Recomp) sat in 23-44 % of the travel, so Harry jumped
+     from a stop to a run and could hardly walk. Fix (`stick_deadzone.h`, after HP-POA-Xbox-Recomp's learned
+     compensation, MIT, facts only): each of 8 directions learns the furthest the stick has reached (at least 0.60);
+     a reading is scaled by its direction's reach. A full-range pad keeps its whole travel, a short pad (0.67 straight
+     back) still reaches full there. `RECOMP_STICK_RANGE=<fraction>` keeps a fixed range, `1` turns it off. Tests:
+     `engine/xboxrecomp/tests/stick_deadzone` (7 new checks; written first, failed, then pass). Not verified with the
+     owner's pad (scripted sticks are full pushes, unchanged by either rule).
+   - Not changed: upstream's "Responsive movement" (turn speeds x2, no shuffle/pivot wait, instant run) is a
+     deliberate change from the console's feel, not a port defect; a candidate setting if the owner still finds it slow.
+   Backport candidate: the learned range in every port that has CoS's fixed 0.65 (`stick_deadzone.h`: HP1, CoS, NFSU1, NFSU2
+   if they took it).
+3. **`[pad]` lines off by default in `tools/play_dev.sh`** (11,340 of the 58,301 lines in the owner's log); `HPPOA_PAD_LOG=1`
+   brings them back.
+
+4. **"Can get stuck": scripted runs after the fix** (60 fps, `HPPOA_CLOCK_LOG=1`). `build/t/st1` (250 s,
+   `build/t/wander_script.txt`: the trunk, then 15 pushes with A): the trunk search ends with the card, Harry goes through
+   the door to the stairs and back (`portal_boysdorm_to_boysdormstairs.pkg` and back); `build/t/st2` (175 s,
+   `build/t/stairs_script.txt`: straight out of the door): stairs, common room portal loaded, then a cutscene and Harry back
+   in the dormitory with the "show the Folio Bruti to Ron" hint (`n0start_01.pkga`: the story sends him back until the task
+   is done; not a stall). Both: 0 `[ICALL]` misses, the clock at x1.000 (300 ticks per 5 s; one window x0.979), no stub hit.
+   `[UNIMPL]` seen: the known D3D `in`/`out`/`wbinvd`, and `pushfd`/`popfd` at `0x159676`/`0x159680` (6 each), inside a
+   `pushal ... popal` around a call whose flags nothing reads after: harmless. The common room's own steps (after the
+   Folio) were not reached by script.
+
+## 1e. Performance: shader compile stalls (play test 1, issue 3)
 
 The owner's play test (60 fps) showed drops to 51 fps with single frames of 170-600 ms, each logged as
 `[hitch] ... 1 programs compiled (172 ms)`: a program (vertex program + combiner state) seen for the first time is compiled on
@@ -307,11 +367,17 @@ Not applied to the other repos (rule: an engine fix found in one Xbox port goes 
    stall (NFSU1, NFSU2, HP1, CoS). Copy the block and the hitch line's pipeline count; check that `shader language 3.0` is
    logged and no `shader failed` lines appear over each port's routes.
 
+5. **Missed functions referenced only by an immediate** (`tools/immscan.py <repo>`, read-only on another port): PoA had 8
+   (#7, the trunk). Run on the other ports' current `functions.json` (2026-11-24): HP1 0 and CoS 0 hits; NFSU2 3
+   (`0x4C25D`, `0x10C2C9`, `0x119144`) and NFSU1 about 30 at `0x1BDxxx..0x1BE8xx` (pushed from `0x30xxx..0x4Cxxx`, likely
+   string or table pointers in `.text`): to be checked with `seedcheck.py` there before seeding.
+6. **Learned stick range** (`stick_deadzone.h`, `stick_range_at`; 1d item 2) for every port with CoS's fixed 0.65.
+
 ## 2. Tools
 
 Dev scripts (inherited): `tools/stubcheck.py` (is any empty stub real code), `tools/run_test.sh <name> <secs> <shot times>`
-(a scripted run with screenshots), `tools/sheet.sh`, `tools/seedcheck.py` (is every seed an instruction start), `tools/addseed.py`,
-`tools/relift.sh`, `tools/play_dev.sh` (play in a window, own HOME), `tools/sigmatch.py`, `tools/xdis.py`. Configure
+(a scripted run with screenshots; `HPPOA_BIN=` runs another binary), `tools/sheet.sh`, `tools/seedcheck.py` (is every seed an instruction start), `tools/addseed.py`,
+`tools/relift.sh`, `tools/immscan.py` (functions referenced only by an immediate), `tools/play_dev.sh` (play in a window, own HOME), `tools/sigmatch.py`, `tools/xdis.py`. Configure
 (as `tools/build_release.sh` does): `engine/tools/regen.sh`, then CMake with `-DNFSU2_GEN_DIR=engine/gen`, target `hppoa_recomp`.
 
 ## 3. Not verified / open issues (after step 3)

@@ -19,3 +19,10 @@ Version 0.0.1: the port is started; nothing runs yet.
 - The runtime's launch-data title id now comes from the XBE certificate (was a fixed `0x45410091`); the DSOUND range comes from
   `engine/src/region_profile.h`.
 - References: HP-POA-Xbox-Recomp and HP3-Recompiled (see `docs/upstream-patches/README.md`).
+- Fixed: searching the trunk in the Gryffindor dormitory no longer gets stuck (8 functions referenced only from state-table
+  initializers were never lifted; seeded, found with the new `tools/immscan.py`).
+- Handling: the left stick keeps its whole travel on pads that reach full tilt (walking was squeezed into a third of the
+  stick: a push to 65 % read as full); the range compensation is now learned per direction. `RECOMP_STICK_RANGE` still
+  fixes it.
+- `tools/play_dev.sh` no longer logs every controller change (`HPPOA_PAD_LOG=1` does); `HPPOA_MOVE_LOG=1` logs the player's
+  movement a tick.

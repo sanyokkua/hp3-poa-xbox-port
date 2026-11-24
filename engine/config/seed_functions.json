@@ -342,5 +342,37 @@
  {
   "start": "0x002C5BEA",
   "note": "XPP: data-referenced function (pointer audit)"
+ },
+ {
+  "start": "0x000B3AC0",
+  "note": "member-fn ptr stored by static init 0x261C7F (missed)"
+ },
+ {
+  "start": "0x000B6170",
+  "note": "member-fn ptr stored by static init 0x260764; [ICALL] miss in the dormitory trunk search (PLAYTEST1 #7)"
+ },
+ {
+  "start": "0x000B67A0",
+  "note": "member-fn ptr stored by static init 0x2615A3 (missed)"
+ },
+ {
+  "start": "0x000B9390",
+  "note": "member-fn ptr stored by static init 0x262EBB (after padding inside 0xB9306's span)"
+ },
+ {
+  "start": "0x000B97B0",
+  "note": "member-fn ptr stored by static init 0x261B1F; [ICALL] miss on the train (PLAYTEST1 log)"
+ },
+ {
+  "start": "0x000F9AE0",
+  "note": "member-fn ptr stored by static init 0x262619 (missed)"
+ },
+ {
+  "start": "0x001915C0",
+  "note": "callback pushed at 0x1922AF (missed)"
+ },
+ {
+  "start": "0x0026E140",
+  "note": "D3D callback stored at 0x26F02A (missed)"
  }
 ]
