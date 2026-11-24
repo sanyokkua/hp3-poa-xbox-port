@@ -257,6 +257,16 @@ New Game, the Hogwarts Express cutscene, the corridor, the luggage car and the F
 3. **`[pad]` lines off by default in `tools/play_dev.sh`** (11,340 of the 58,301 lines in the owner's log); `HPPOA_PAD_LOG=1`
    brings them back.
 
+4. **"Can get stuck": scripted runs after the fix** (60 fps, `HPPOA_CLOCK_LOG=1`). `build/t/st1` (250 s,
+   `build/t/wander_script.txt`: the trunk, then 15 pushes with A): the trunk search ends with the card, Harry goes through
+   the door to the stairs and back (`portal_boysdorm_to_boysdormstairs.pkg` and back); `build/t/st2` (175 s,
+   `build/t/stairs_script.txt`: straight out of the door): stairs, common room portal loaded, then a cutscene and Harry back
+   in the dormitory with the "show the Folio Bruti to Ron" hint (`n0start_01.pkga`: the story sends him back until the task
+   is done; not a stall). Both: 0 `[ICALL]` misses, the clock at x1.000 (300 ticks per 5 s; one window x0.979), no stub hit.
+   `[UNIMPL]` seen: the known D3D `in`/`out`/`wbinvd`, and `pushfd`/`popfd` at `0x159676`/`0x159680` (6 each), inside a
+   `pushal ... popal` around a call whose flags nothing reads after: harmless. The common room's own steps (after the
+   Folio) were not reached by script.
+
 ## 1. Phase 2: the to-do (items 1 done above)
 
 1. Lift: `engine/tools/regen.sh` with this XBE (`LIFT_ONLY=1` to skip the disassembly). Seeds are empty; start from the facts in
