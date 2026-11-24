@@ -4,6 +4,10 @@
 
 Version 0.0.1: the port is started; nothing runs yet.
 
+- Shaders compile with Metal Shading Language 3.0 instead of the OS default: a program seen for the first time stalled its frame
+  by 350-600 ms (5.5 s at the first train corridor frame), now 50-90 ms. Later runs were already free of these stalls (the
+  shader cache in the player folder). `RECOMP_MTL_LANG` picks another version.
+
 - Started from the tree of the Chamber of Secrets port (sanyokkua/hpcos-xbox-port at `8342d21`): the engine, installer kit, tools
   and tests, renamed for *Harry Potter and the Prisoner of Azkaban* (Xbox, USA): app, binary `hppoa`, `HPPOA_` variables,
   player folder `~/Library/Application Support/Harry Potter Prisoner of Azkaban`, CMake target `hppoa_recomp`.

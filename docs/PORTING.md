@@ -207,6 +207,40 @@ New Game, the Hogwarts Express cutscene, the corridor, the luggage car and the F
    2500-4800 of the train route (860,489 draws) and 1,100 frames of the dormitory (498,938 draws) has only triangle strips
    (prim 6); no line draw was found to test a fix against.
 
+## 1d. Performance: shader compile stalls (play test 1, issue 3)
+
+The owner's play test (60 fps) showed drops to 51 fps with single frames of 170-600 ms, each logged as
+`[hitch] ... 1 programs compiled (172 ms)`: a program (vertex program + combiner state) seen for the first time is compiled on
+the render thread while the frame waits.
+
+1. **Measured.** Route: `build/t/train_script.txt` plus the stick up again at 150 s and A at 175/180 s (title, New Game, train
+   cutscene, corridor, Ron cutscene, luggage car), `HPPOA_FPS=60 RECOMP_FPS_LOG=1`, 200 s, fresh HOME (`build/t/base1`); then the
+   same HOME again. First run: 26 programs compiled in play, **12.7 s of compiling**, 13 frames over 50 ms from compiles (worst
+   5.5 s at the first corridor frame, 11 programs; then 350-600 ms each). Second run: `prewarm: 27 programs, 63 pipelines in 6 ms`,
+   **0 compile hitches**: the existing cache (`progcache.bin` + `mtlpipes.bin` in the working directory, the player folder
+   `.../player/` in the app; Metal's own cache keeps the compiled code) already works across runs. What is left in a warm run:
+   the New Game load (about 100 frames over 25 ms while the level loads, documented in step 3) and two boot frames.
+2. **Why a compile took 500 ms.** Timing each `newLibraryWithSource` (and an offline harness compiling the dumped MSL): vertex
+   programs 15 ms, combiner (fragment) shaders 340-590 ms, even a trivial 5 KB one. The cost is the standard library's texture
+   `sample()` templates at the newest MSL version, which Metal picks by default (4.1 on this macOS). Per fragment shader:
+   4.1 540 ms, 4.0 190, 3.2 170, 3.1 63, **3.0 43 ms**, 2.4 33 ms. All dumped shaders compile at 3.0 and 2.4.
+3. **Fix (`nv2a_metal.m`): compile with MSL 3.0** (`MTLCompileOptions.languageVersion`; `RECOMP_MTL_LANG=<major>.<minor>`
+   picks another, `0` Metal's default; the log says `shader language 3.0`). Same math mode (safe) and invariance options; the
+   generated shaders need nothing newer. The hitch line now also counts pipeline creations (`N pipelines (ms)`), which the
+   compile time did not include.
+4. **Result (first run, fresh HOME, same route):** compiles 45-60 ms a program + 8-30 ms a pipeline; frames over 50 ms from
+   compiles 11, worst **176 ms** (was 5,553), the rest 57-90 ms (were 350-600); 12 compile frames over 50 ms add up to 603 ms
+   (were 12,733). Second run: 0 compile hitches, prewarm 6 ms. Dormitory (`HPPOA_START_CHAPTER=1`, fresh HOME): 1 compile
+   frame (61 ms + 25 ms pipeline). Every 10 s window of play outside the load: flip p50 16.7 ms, p99 16.9-17.9 ms.
+   Image check: the pause screen over the dormitory at MSL 3.0 and 4.1 look the same; the remaining pixel differences (mostly
+   ±1) are no larger than between two runs at the same version (the scene's lights move).
+5. **CPU (`sample`, 10 s in the luggage car, warm, 60 fps, 530 draws a frame):** game thread (lifted code) ~66 % busy, the rest
+   waiting on the GPU fence; pushbuffer thread ~53 % (`lit_color`, the CPU vertex lighting, ~12 % of it; `mtl_draw_raw` ~10 %);
+   GPU p50 7 ms, p99 12-17 ms. No thread is the limit at 60 fps here, so nothing else was changed.
+
+Not done: compiling a first-seen program off the render thread (draws would have to be skipped or wait; no such pattern in this
+renderer). A first-seen program still costs one 50-90 ms frame, once per player.
+
 ## 1. Phase 2: the to-do (items 1 done above)
 
 1. Lift: `engine/tools/regen.sh` with this XBE (`LIFT_ONLY=1` to skip the disassembly). Seeds are empty; start from the facts in
@@ -268,6 +302,10 @@ Not applied to the other repos (rule: an engine fix found in one Xbox port goes 
    fade mask) gets gaps. Count line draws with `RECOMP_DRAW_LOG` in each port before widening them (PoA's tested scenes have none).
 4. **Method: game clock against wall time** (`HPPOA_CLOCK_LOG`, the frame timer hook in `recomp_manual.c`). Each port's 60 fps
    option should be checked the same way (game ms / wall ms per window, ticks without a frame).
+5. **Metal: compile with MSL 3.0, not the OS default** (`nv2a_metal.m`, `s_copts.languageVersion`; section 1d). On macOS 27 a
+   combiner shader takes ~540 ms at the default 4.1 and ~43 ms at 3.0; every port shares this renderer and the same cold-compile
+   stall (NFSU1, NFSU2, HP1, CoS). Copy the block and the hitch line's pipeline count; check that `shader language 3.0` is
+   logged and no `shader failed` lines appear over each port's routes.
 
 ## 2. Tools
 
