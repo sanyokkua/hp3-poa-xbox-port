@@ -304,6 +304,26 @@ frame, for scripted runs), and `[dl]` prints stage 0's texture coordinates (`uv0
      in `tools/difftest.py` (or capture `sub_001AAA00` itself) and compare `+0x1C`; the record is the caller's `ebx`.
      Watch tool `HPPOA_WATCH_FMT=<dword>,<s>` (`HPPOA_WATCH_ADDR`): write-protects the pages holding a value and logs
      the lifted function that writes next to it (dladdr of the host pc).
+   - **Options "(" glyph: fixed (round 3).** Symptom: a "(" at the right end of the Vibration and Subtitles rows (title and
+     pause Options). Difftest finished: `tools/difftest.py` now maps the low 64 KB as zeros (Unicorn's 32-bit mode keeps
+     fs's base at 0, so SEH prologues' `fs:[0]` reach address 0; it stopped there before) and takes `DIFF_BREAK=<eip>,...`
+     (registers and `[ebp-0x20]`/`[ebp-0x1c]` at those addresses). Field builder call 33 of the title Options route
+     (`build/t/diffO`, the "Off" field) runs 102,647 x86 instructions to the first kernel call: at `0x1AE31C` the original
+     x86 also has `_ftol` = 6, so `+0x1C` = 128 on both sides (no difference in the record). **Root cause: the game's own
+     arithmetic, not the lift.** `sub_001ADFC0` sizes the text texture as `2 << _ftol(log2(W + 7))` (`0x1AE2E9..0x1AE323`;
+     W = the field width `[ebp-0x18]`) but draws the field's quad W + 24 wide (W + 13..14 for fields of mode 2, field
+     `+0x18`; measured over 38 fields with `HPPOA_TEX_LOG=1`), with u = quad width / texture width and WRAP addressing (every
+     Apt draw has `addr 00010101`; the game never sets clamp). The "Off" field: W 115, texture 128, quad 139, u 1.086: texels
+     0-11, the left of its "O", repeat at the right end. Any field with W in [2^k - 24, 2^k - 8] can do it; on the routes
+     checked only "Off" does (title menu, Load Game, Bonus Activities, the intro text, pause, pause Options). The console
+     should show it too (same code, same wrap); not checked on xemu (needs an owner screenshot of Options there).
+   - Fix (hook, `engine/src/recomp_manual.c`, `sub_0013E9F8` = the CRT `_ftol`, only for the call returning to `0x1AE31C`):
+     the exponent is raised until the texture is at least the quad's width (at most 512). `HPPOA_APT_TEXT_FIT=0` keeps the
+     game's size. Evidence (same binary, fit off / on): the "Off" texture 128 -> 256, its u 1.086 -> 0.543
+     (`build/t/O5_off`, `O5_fix` `[dl]`), no "(" on the title and pause Options (`build/t/evidence/options_glyph_before_after.png`,
+     `options_title_and_pause_fixed.png`); the other 37-45 fields of each route keep their size (`[d3dx] text field` lines:
+     only `W 115 mode 3: texture 128 -> 256`); main menu, Load Game and Bonus Activities shots differ only in the animated
+     selection sparkle (`menus_fit_off_vs_on.png`, `pause_fit_off_vs_on.png`).
    - **Malfoy's orange face (open, not started).** The xemu recording (`Screen Recording 2026-11-24 at 23.11.49.mov`)
      shows the cutscene right after the luggage car; xemu's own faces are not ground truth (Ron's face garbled there).
 
@@ -478,6 +498,9 @@ Not applied to the other repos (rule: an engine fix found in one Xbox port goes 
    draws world-space quads, particles or masks with D3D's immediate mode (`Begin`/`SetVertexData4f`/`End`) in fixed-function mode
    lost them (drawn as pixel coordinates, mostly off screen). Before backporting, run each port's route with `RECOMP_INLINE_FF=0`
    and without and compare: 2D drawn that way in fixed-function mode with a stale composite matrix would move.
+9. **`tools/difftest.py`: low 64 KB mapped, `DIFF_BREAK`** (1d item 4). The copy in hpcos-xbox-port stops at the first SEH
+   prologue (`mov eax, fs:[0]` reads address 0 in Unicorn's 32-bit mode); copy the mapping there and to any port that has
+   the tool.
 
 ## 2. Tools
 
@@ -497,8 +520,8 @@ Dev scripts (inherited): `tools/stubcheck.py` (is any empty stub real code), `to
   Its last subtitle line stays on screen for about a second after the skip.
 - **Load Game screen**: the slot names showed a moment after the screen (one shot had an empty list); not checked further.
 - **NV2A lines** one host pixel wide (step 3, item 8); PoA's one line (the shadow fade mask) lands whole (1d item 1).
-- **Play test 1 open items** (1d): Malfoy's orange/blinking face (not reproduced), the Options "(" glyphs (wrapped u on a too
-  small text texture; the size choice not found).
+- **Play test 1 open items** (1d): Malfoy's orange/blinking face (not reproduced). The Options "(" glyphs are fixed by a
+  hook (1d item 4); whether the console shows them too is not checked.
 - **Renderer** not checked: fog, W-buffer bit of CONTROL0, post-effect thresholds (CoS's).
 - **Host pad in scripted tests**: a controller connected to the Mac also drives the overlay during `tools/run_test.sh` runs (one run's
   settings were changed that way); check `[overlay] open` in a test log.

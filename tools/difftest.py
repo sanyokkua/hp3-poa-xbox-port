@@ -8,7 +8,7 @@ HPPOA_DIFF_AT; see recomp_manual.c). This runs the ORIGINAL x86 bytes from the "
 Unicorn until the function returns, then compares registers and guest memory with "post" (what
 the lifted C produced). A difference that is not float rounding is a lifting bug candidate.
 Kernel calls and MMIO accesses are reported; the run stops at the first kernel call."""
-import struct, sys
+import os, struct, sys
 from unicorn import Uc, UC_ARCH_X86, UC_MODE_32, UC_HOOK_CODE, UC_HOOK_MEM_UNMAPPED, UcError
 from unicorn.x86_const import *
 
@@ -36,6 +36,10 @@ def main():
     uc.mem_write(lo, pre['main'])
     uc.mem_map(pre['cbase'], len(pre['contig']))
     uc.mem_write(pre['cbase'], pre['contig'])
+    # Low 64 KB (not in the capture) as zeros: Unicorn's 32-bit mode keeps fs's base at 0, so SEH prologues
+    # (mov eax, fs:[0] ... mov fs:[0], esp) read and write address 0 here; the function restores what it pushed.
+    if lo > 0:
+        uc.mem_map(0, lo)
     eax, ecx, edx, ebx, esp, ebp, esi, edi = pre['regs']
     for r, v in zip((UC_X86_REG_EAX, UC_X86_REG_ECX, UC_X86_REG_EDX, UC_X86_REG_EBX,
                      UC_X86_REG_ESP, UC_X86_REG_EBP, UC_X86_REG_ESI, UC_X86_REG_EDI), pre['regs']):
@@ -49,12 +53,20 @@ def main():
         events.append('unmapped access %#x (size %d, eip %#x)' % (addr, size, uc.reg_read(UC_X86_REG_EIP)))
         return False
 
+    # DIFF_BREAK=<eip>,<eip>: print the registers (and the dword at [ebx+DIFF_OFF]) each time one is reached
+    brk = {int(x, 16) for x in os.environ.get('DIFF_BREAK', '').split(',') if x}
+
     def on_code(uc, addr, size, ud):
+        if addr in brk:
+            r = [uc.reg_read(x) for x in (UC_X86_REG_EAX, UC_X86_REG_ECX, UC_X86_REG_EDX, UC_X86_REG_EBX,
+                                          UC_X86_REG_ESI, UC_X86_REG_EDI, UC_X86_REG_EBP, UC_X86_REG_ESP)]
+            loc = struct.unpack('<ii', bytes(uc.mem_read(r[6] - 0x20, 8)))
+            print('  break %#x: eax %#x ecx %#x edx %#x ebx %#x esi %#x edi %#x ebp %#x esp %#x [ebp-0x20] %d [ebp-0x1c] %d'
+                  % ((addr,) + tuple(r) + loc))
         n[0] += 1
         if n[0] > 200_000_000:
             events.append('instruction limit'); uc.emu_stop()
 
-    import os
     watch = [int(x, 16) for x in os.environ.get('DIFF_WATCH', '').split(',') if x]
     if watch:
         from unicorn import UC_HOOK_MEM_WRITE

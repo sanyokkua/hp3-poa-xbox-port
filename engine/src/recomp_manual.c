@@ -1177,6 +1177,34 @@ void sub_00279064(void)
     sub_00279064_gen();
 }
 
+/* Apt text texture width (Options "(" glyph, PORTING 1d item 4). The text field builder sub_001ADFC0 sizes a
+ * field's text texture as 2 << _ftol(log2(W + 7)) (0x1AE2E9..0x1AE323; W = the field's width, [ebp-0x18]) but draws
+ * the field's quad W + 24 wide (W + 13..14 for a field of mode 2, field +0x18; measured over 38 fields) with
+ * u = quad width / texture width. For W in [2^k - 24, 2^k - 8] the quad reaches
+ * past the texture and the wrapped u samples the left of the text: the "Off" field (W 115: texture 128, quad 139,
+ * u 1.086) shows the left of its "O" as a "(" at its right end. The original x86 makes the same choice (difftest of
+ * the call: same +0x1C), so this is the game's own arithmetic, not a lifting difference. Here the exponent from that
+ * one _ftol call (return 0x1AE31C) is raised until the texture is at least the quad's width (at most 512, the
+ * width the builder already caps fields at). HPPOA_APT_TEXT_FIT=0 keeps the game's size. */
+extern void sub_0013E9F8_gen(void);
+void sub_0013E9F8(void)
+{
+    static int on = -1;
+    uint32_t ra = MEM32(esp), sp = esp;
+    sub_0013E9F8_gen();
+    if (ra != 0x001AE31Cu) return;
+    if (on < 0) { const char *e = getenv("HPPOA_APT_TEXT_FIT"); on = !e || *e != '0'; }
+    {
+        /* at the call, esp = ebp - 0x2084 (frame) - 12 (edi, ebx, esi) - 4 (return address) */
+        int32_t w = (int32_t)MEM32(sp + 0x2084u + 16u - 0x18u);
+        uint32_t mode = MEM32(MEM32(sp + 0x2084u + 16u + 8u) + 0x18u), n = eax;   /* field +0x18 */
+        int32_t quad = w + (mode == 2 ? 14 : 24);
+        while (on && eax < 8u && (int32_t)(2u << eax) < quad) eax++;
+        if (getenv("HPPOA_TEX_LOG"))
+            fprintf(stderr, "[d3dx] text field W %d mode %u: texture %u -> %u\n", w, mode, 2u << n, 2u << eax);
+    }
+}
+
 /* The Apt text field builder (sub_001ADFC0: sizes a field's text texture, calls D3DXCreateTexture through
  * sub_0004F280); HPPOA_DIFF_FN=1ADFC0 with HPPOA_DIFF_DIR/HPPOA_DIFF_AT captures its calls for tools/difftest.py. */
 extern void sub_001ADFC0_gen(void);

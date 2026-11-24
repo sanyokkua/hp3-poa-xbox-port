@@ -8,6 +8,9 @@ Version 0.0.1: the port is started; nothing runs yet.
   texture matrix and its builder checked; xemu shows no floor shadow either): no change. Dev aids for the draw log
   (`RECOMP_SURF_TRACE`, `RECOMP_DL_TEXGEN`, `RECOMP_DL_RT`, `RECOMP_DUMP_ALPHA`) and for the game's side (`HPPOA_TM_LOG`,
   `HPPOA_TEX_LOG`, `HPPOA_WATCH_FMT`, `HPPOA_DIFF_FN`/`_DIR`/`_AT`).
+- Fixed: no stray "(" at the right of the Vibration and Subtitles rows in Options. The game sizes a text field's texture
+  smaller than the field it draws (here 128 texels for a 139-pixel field, and the texture repeats); the texture is now made
+  wide enough. `HPPOA_APT_TEXT_FIT=0` keeps the game's size. `tools/difftest.py` runs functions with SEH frames.
 - Shaders compile with Metal Shading Language 3.0 instead of the OS default: a program seen for the first time stalled its frame
   by 350-600 ms (5.5 s at the first train corridor frame), now 50-90 ms. Later runs were already free of these stalls (the
   shader cache in the player folder). `RECOMP_MTL_LANG` picks another version.
