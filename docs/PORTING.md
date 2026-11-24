@@ -7,7 +7,7 @@ Sorcerer's Stone port's tree ([hp1-xbox-port](https://github.com/sanyokkua/hp1-x
 shared with those games. Per the HP3-Recompiled notes, this game is **EA UK's engine** (the same family as the PS2 Chamber of
 Secrets), not Eurocom's (CoS) and not Warthog's (HP1).
 
-Status: **step 1 done (lifted, 0 stubs on real code, builds, boots to the first XDK blocker: the AC'97 reset spin in DSOUND); no frame is drawn yet.**
+Status: **step 2 done: XDK glue in, boots through the EA/WB logos and `intro.mad` to "Press START", the main menu, New Game, the Hogwarts Express cutscene and controllable play in the train corridor (Harry walks with the left stick) about 75 s after start. No hook for movies, loading or the game yet.**
 
 ## Sources (pinned)
 
@@ -88,9 +88,55 @@ this game's `$$XTIMAGE` / title image gives a good one, or draw one.
    The HP3-Recompiled notes had the same stop (their emulated APU died in `DirectSoundCreate`, see `docs/hp-poa-hooks.md`).
    `tools/smoke.sh` fails for the same reason (no frame dump).
 
-Next (not done): the XDK glue of the CoS list for these addresses. Known now: `D3D_BlockOnTime 0x0026C540`, device pointer `0x00275FE8`,
-fence `+0x2C`/`+0x30`, vblank ISR `0x00269C90`, XInput `0x002BFC0C..0x002C0C19`, DSOUND code `0x2B66E0` + 37,428 (already in `region_profile.h`),
-AC'97 reset `0x2BE412`. All hooks of the references with their meaning for us: `docs/hp-poa-hooks.md`.
+## 1b. Step 2: XDK glue and boot to the Hogwarts Express (done)
+
+PoA is XDK 5849, the same as NFSU2, so the glue was found from NFSU2's hooks: `tools/sigmatch.py` on NFSU2's address gave one hit
+each, and `tools/xdis.py` of both bodies differs only in branch targets (100-140 instructions compared).
+
+| CoS # | What | PoA address | NFSU2 address |
+|---|---|---|---|
+| 1 | CRT memmove (two copies) | `0x13E2F0`, `0x13FF20` | `0x2A7EE0`, `0x2A9450` |
+| 2 | D3D_BlockOnTime, device pointer | `0x26C540`, `0x275FE8` (reads `+0x2C`/`+0x30`) | `0x2E8F20` |
+| 3 | vblank handler, PGRAPH handler, D3D DPC (not hooked) | `0x26DF00`, `0x26E470`, `0x26E6B0` | `0x2F1D80`, `0x2F22F0`, `0x2F2530` |
+| 4 | DSOUND DSP command post | `0x2B8B0D` | `0x32EB65` |
+| 5 | AC'97 channel reset (NABM table `0x2BF060`, lock `0x2B6710`/`0x2B6732`, re-arm `0x2BE21C`) | `0x2BE412` | `0x33518D` |
+| 7 | XInitDevices, XInputOpen, Close, GetCapabilities, GetState, SetState; gamepad type `0x2BF9F4`, type records `0x2BF924..0x2BF92C` | `0x2BFC0C`, `0x2C096C`, `0x2C09C2`, `0x2C09CE`, `0x2C0BA6`, `0x2C0C19` | (CoS: `0x176729`...; four match CoS by signature, SetState is the same code) |
+
+HP3-Recompiled's "vblank ISR `0x269C90`" is not the vblank handler: it is a swap-side routine that calls `BlockUntilVerticalBlank 0x267470`.
+The flip-interval rewrite (CoS `HPCOS_FPS=60`) was left out: 60 fps is later work.
+
+Blockers, in the order they showed (`tools/run_test.sh`, scripted pad):
+
+1. **DirectSoundCreate spins.** Symptom: game thread 100 % in `sub_002BE412`. Cause: the AC'97 reset's NABM load is hoisted out of its wait
+   loop (CoS hook 5). Fix: the hook above. Evidence: the next run got past it (commit `7b59edc`).
+2. **DirectSoundCreate crashes** (`SIGSEGV` in `sub_002B94B1`, a null `call [eax+8]` at `0x2B8740` first, `E_OUTOFMEMORY` in `ebx`).
+   A trace of DSOUND's allocator `sub_002B88AE` showed objects at `0x34`, `0xC4`, `0x554`: the block **sizes**. Cause: the lifted pool
+   allocator `sub_002B87E8` ended after its `ExQueryPoolBlockSize` call, because the disassembler had a function start at `0x2B87FF`, the
+   middle of that `call [0x2C7954]`. Its only caller (`0x2B5A30`) was inside `sub_002B48AE`, XGRPH's tables (`0x2B2C78..0x2B5A54`) decoded as
+   code, itself "called" only from those tables (`0x2B3831`). The toolkit's `_prune_data_call_targets` dropped split targets called from
+   outside every function, but this caller was inside a (fake) one. Fix (`engine/xboxrecomp/tools/disasm/functions.py`): a function known
+   only as a call target whose callers are all outside every function is data too; its calls no longer count as real callers of a split
+   target. Two unit tests; all 62 disasm tests pass. The relift dropped exactly `0x2B87FF` (21,740 -> 21,739 functions; a mid-instruction scan
+   of `functions.json` finds one other case, `0x1F45F0` inside `0x1F45DA`: both are a jump table decoded as code, never called, harmless). Evidence: real pool addresses
+   (`0x01204324`...), no crash, the EA/WB logos, `intro.mad` and "Press START" at 58 s (commit `7b59edc`).
+3. **XPP callbacks unresolved.** `[ICALL] Failed to resolve VA 0x002C0507` (from XInitDevices' driver-init loop, return `0x2BFC44`) and
+   `0x002C223D` (return `0x2C3D1F`). Both free (after `ret`/padding). A scan of data dwords pointing into code found five more XPP
+   functions only referenced from XPP data: `0x2C0E11`, `0x2C17D8`, `0x2C182A`, `0x2C1C1E`, `0x2C5BEA`. All 7 seeded (86 seeds); stubcheck
+   32 stubs, 0 real code. Evidence: 0 ICALL failures (commit `23aa5b1`).
+4. **Input.** Start at "Press START" reaches the main menu, both through the direct XInput hooks and through the emulated USB pad
+   (`HPPOA_XINPUT_USB=1`). The direct path is the default as in CoS (XInputSetState's OUT pipe never answers on the emulated USB). An early
+   "Start does nothing" was the zsh trap again: `$t:start` in the script builder is a history modifier; write `${t}:start`.
+5. **New Game.** Start, then A every 4 s: New Game -> the Hogwarts Express cutscene (Hermione, subtitles) -> Harry in the train corridor
+   with the HUD, about 75 s after boot (`build/t/ng/sheet.png`). With the left stick after that (`build/t/final/sheet.png`, final build):
+   Harry walks down the corridor, through the door into the luggage car, the Ron/Scabbers cutscene plays and the Flipendo tutorial prompt
+   ("Pull and hold right trigger...") appears. 0 crashes, 0 ICALL failures. Loaded: `data/packages/orchestrator/inhogex_01.pkga`, `poa_ig.big`.
+6. **AV region.** `XGetVideoStandard` (`0x195024`) reads `XC_FACTORY_AV_REGION` (`0x103`), which the kernel did not answer (0). The renderer
+   init (`0x349E5`) then keeps its PAL flag and sets a 40 ms minimum game step (`sub_00096520`) instead of NTSC's 33 ms. Fix: the kernel
+   answers NTSC-M `0x00400100` (`kernel_xbox.c`). Game region `0x104` already answers 1 (North America), which is this disc's certificate region.
+
+Checked and fine: the KTIMER lost-expiry race of HP3-Recompiled's toolkit (movies did not hang; the game clock runs), no white frames in the
+shots. Remaining `[UNIMPL]` no-ops: `in al,dx 0x26DF7D` (vblank handler, port `0x80C0`, as in NFSU2), `pushfd/popfd 0x159676/0x159680`
+(around a call, flags unused after), `wbinvd 0x26BC74`, `out dx,al 0x26EE90`, `cli/sti 0x2C6401/0x2C6412`.
 
 ## 1. Phase 2: the to-do (items 1 done above)
 
@@ -104,6 +150,12 @@ AC'97 reset `0x2BE412`. All hooks of the references with their meaning for us: `
 4. Per the repository rule: an engine fix found here that the other Xbox ports lack is backported (NFSU1, NFSU2, HP1, CoS).
 
 ## CoS hooks to re-find for HP3
+
+PoA status (2026-11-24): **1-5 and 7 installed** (step 2, table in 1b); 6 done in step 1; 8 not needed so far (`.mad` movies play as
+textures, no overlay call); 9 and 10 not seen (no DVD-race or loader stall up to the train); 11, 12, 15, 16 not started (features/dev tools);
+13, 14 CoS-only (PoA's crash guards are other functions, `docs/hp-poa-hooks.md`); 17 not needed (no such patch found yet); 18 replaced by
+PoA's 86 seeds. The CoS rows below keep CoS's addresses.
+
 
 Everything below was in `engine/src/recomp_manual.c` for Chamber of Secrets (XDK 5028, NTSC); the addresses are **CoS's and mean
 nothing in this executable**. The old file is in hpcos-xbox-port at `8342d21`. A hook is a strong `void sub_XXXXXXXX(void)` in
@@ -131,6 +183,18 @@ the rest.
 | 17 | Lifted-code patch | `sub_000C0001` starts with a branch on its caller's flags (the lifter gave `_flags = 0`): `engine/tools/patch_gen.py` | `0xC0001` (the null check after `0xBFFFF`) |
 | 18 | Seeds | 177 hidden-function seeds from HP-COS in `engine/config/seed_functions.json` | now `[]` |
 
+## Backport candidates (runtime and toolkit fixes found here)
+
+Not applied to the other repos (rule: an engine fix found in one Xbox port goes to NFSU1, NFSU2, HP1, CoS):
+
+1. **Disassembler: split call targets called from data-decoded bodies** (`engine/xboxrecomp/tools/disasm/functions.py`,
+   `_prune_data_call_targets`, with two tests in `test_prune_data_call_targets.py`). Any title whose library sections end in tables
+   (XGRPH here) can have a fake function cut a real one at a mid-instruction "call". Check each port: relift and diff `functions.json`
+   (PoA: exactly one function start removed). The mid-instruction scan used here: start addresses inside a decoded instruction of the
+   preceding function.
+2. **Kernel: `XC_FACTORY_AV_REGION` (0x103) answers NTSC-M `0x00400100`** (`kernel_xbox.c`). It was 0 in every port; any title that
+   calls `XGetVideoStandard` saw "no standard" (PoA: PAL frame floor). Harmless for titles that never read it.
+
 ## 2. Tools
 
 Dev scripts (inherited): `tools/stubcheck.py` (is any empty stub real code), `tools/run_test.sh <name> <secs> <shot times>`
@@ -138,10 +202,16 @@ Dev scripts (inherited): `tools/stubcheck.py` (is any empty stub real code), `to
 `tools/relift.sh`, `tools/play_dev.sh` (play in a window, own HOME), `tools/sigmatch.py`, `tools/xdis.py`. Configure
 (as `tools/build_release.sh` does): `engine/tools/regen.sh`, then CMake with `-DNFSU2_GEN_DIR=engine/gen`, target `hppoa_recomp`.
 
-## 3. Not verified
+## 3. Not verified / open issues (after step 2)
 
-Everything about running the game. Nothing was lifted, compiled or run in phase 1; `engine/src/recomp_manual.c` and
-`hppoa_options.c` were syntax-checked only, and `mac/xbe_check.py` was run on the disc's `default.xbe` (OK, pristine `.text`).
+- **Play beyond the first corridor**: not tried (spells, fights, saves, level changes, the Dementor scene).
+- **Audio**: the APU runs (DSP posts acknowledged, DirectSound created); sound output was not listened to or measured.
+- **Speed**: game time against wall time not measured; the boot to the train takes about 75 s with scripted presses. 60 fps, 16:9 later.
+- **Renderer**: no white frames and no missing geometry seen in the shots (movie, title, menu, cutscene, train). Not checked: shadows,
+  fog, W-buffer bit of CONTROL0, post effects (the inherited thresholds are CoS's).
+- **Rumble**: XInputSetState goes to the host pad; not tested with a real pad.
+- Run it: `tools/play_dev.sh` (own HOME in `build/play`). Scripted: `RECOMP_PAD_SCRIPT="10000:start:200,..." tools/run_test.sh <name> <secs> <shots>`
+  then `tools/sheet.sh build/t/<name>`.
 
 ## Pitfalls (each cost a run)
 
