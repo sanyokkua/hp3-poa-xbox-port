@@ -4,10 +4,8 @@
  * the host's and the Metal renderer's settings: this game's own Options screen
  * is left as it is. Every row is kept in settings.ini.
  *
- * Live: everything but Picture and Keyboard as Controller, which are read at
- * start. The CoS-only rows (Frame Rate, Skip Logo Movies, Skip Cutscenes) are
- * removed with their hooks in recomp_manual.c: add them back when HP3's are found
- * (docs/PORTING.md, "CoS hooks to re-find for HP3").
+ * Live: everything but Frame Rate, Picture, Keyboard as Controller and Skip
+ * Logo Movies, which are read at start. Their hooks: recomp_manual.c.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -64,6 +62,10 @@ static const char *const k_picture[] = { "Fit (4:3, bars at the sides)", "Fill (
 static const char *const k_picture_v[] = { "fit", "fill" };
 static void apply_picture(int c, int at_start) { env("NFSU2_SCREEN", k_picture_v[c], at_start); }
 
+static const char *const k_fps[] = { "Original (30 fps)", "60 fps" };
+static const char *const k_fps_v[] = { "title", "60" };
+static void apply_fps(int c, int at_start) { env("HPPOA_FPS", k_fps_v[c], at_start); }
+
 /* Graphics */
 static void apply_fxaa(int c, int at_start) { (void)at_start; nv2a_vk_fxaa = c; }
 static const char *const k_aniso[] = { "Off", "2x", "4x", "8x", "16x" };
@@ -108,6 +110,11 @@ static void apply_fx(int c, int at_start)
         nv2a_mtl_post_reload();
 }
 
+/* Tweaks */
+static void apply_skip_logos(int c, int at_start) { env("HPPOA_SKIP_LOGOS", c ? "1" : "0", at_start); }
+/* read by recomp_manual.c at every pad read, so a change applies at once */
+static void apply_skip_cutscenes(int c, int at_start) { env("HPPOA_SKIP_CUTSCENES", c ? "1" : "0", at_start); }
+
 /* Advanced */
 static void apply_fps_counter(int c, int at_start)
 {
@@ -128,6 +135,9 @@ static const OverlayOption k_options[] = {
     { "Display", "Picture", "The Xbox's 4:3 picture with bars at the sides, or stretched over the window.",
       "The whole picture: from the next start.",
       CHOICES(k_picture), 0, 1, "picture", k_picture_v, apply_picture },
+    { "Display", "Frame Rate", "The console's 30 fps, or 60 fps: the game clock follows real time and "
+      "cutscenes keep their pace.", "Gameplay, menus and cutscenes: from the next start.",
+      CHOICES(k_fps), 0, 1, "fps", k_fps_v, apply_fps },
 
     { "Graphics", "Anti-Aliasing", "FXAA over the finished picture: smoother edges.",
       "The whole picture, menus too: at once.",
@@ -152,6 +162,13 @@ static const OverlayOption k_options[] = {
     { "Input", "Keyboard as Controller", "Arrows/WASD move, Enter is A and Start, Esc is B, P is Start.",
       "The keyboard in the game (not in this menu): from the next start.",
       CHOICES(k_kbd), 0, 1, "keyboard", k_kbd_v, apply_kbd },
+
+    { "Tweaks", "Skip Logo Movies", "Start without the EA and Warner Bros. logo movies.",
+      "The logo movies before the title screen: from the next start.",
+      CHOICES(k_onoff), 0, 1, "skip_logos", k_01, apply_skip_logos },
+    { "Tweaks", "Skip Cutscenes", "Press Start or Back in a cutscene to end it, as the game's own skip "
+      "does (also the ones it does not let you skip).", "Every cutscene: at once.",
+      CHOICES(k_onoff), 1, 0, "skip_cutscenes", k_01, apply_skip_cutscenes },
 
     { "Advanced", "Performance Overlay", "Frames per second and the slowest frame, top left "
       "(also Cmd+Option+F).", "Top left of the screen: at once.",

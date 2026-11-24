@@ -187,6 +187,8 @@ extern void nv2a_pb_trap_lock(void);
 extern void nv2a_pb_trap_unlock(void);
 extern void nv2a_pb_trap_taken(void);
 
+static int fps60(void);
+
 void sub_0026E470(void)
 {
     volatile uint32_t *nv = (volatile uint32_t *)XBOX_PTR(0xFD000000u);
@@ -197,6 +199,19 @@ void sub_0026E470(void)
     nv2a_pb_trap_lock();
     head = MEM32(blk + 0x1BC);
     nsource = nv[0x400108 / 4];
+    /* 60 fps: Present's NOP trap word is (interval bits << 5) | 1, bits 0..2 = 1/2/3 for 1/2/4 vblanks,
+     * bit 3 = flip at once when late (same D3D code and format as CoS, NFSU1, NFSU2). The title asks for 2
+     * vblanks (D3DPRESENT_INTERVAL_TWO | IMMEDIATE, 0x80000002); HPPOA_FPS=60 rewrites it to 1 as the trap
+     * is taken. */
+    if (nsource && (nv[0x400704 / 4] & 0xFFFFu) == 0x0100u && fps60()) {
+        uint32_t data = nv[0x400708 / 4];
+        if ((data & 0x1Fu) == 1u && ((data >> 5) & 7u) > 1u) {
+            static int told;
+            nv[0x400708 / 4] = (data & ~(7u << 5)) | (1u << 5);
+            if (!told++)
+                fprintf(stderr, "[fps] flip interval %u -> 1 vblank (trap word %08X)\n", (data >> 5) & 7u, data);
+        }
+    }
     {   /* HPPOA_TRAP_LOG=1: each PGRAPH handler call */
         static int lg = -1;
         if (lg < 0) { const char *e = getenv("HPPOA_TRAP_LOG"); lg = e && *e == '1'; }
@@ -287,6 +302,216 @@ void sub_002BE412(void)
     esp += 4;
 }
 
+
+/* ── The game clock (0x0038BA6C) and the frame rate ──────────────────────
+ *
+ * The frame timer sub_001A7450 (thiscall, ecx = the clock, ticked once a frame): +0 frames, +4 game time (ms),
+ * +8 the last step, +0xC QPC ticks a ms, +0x10 origin, +0x14 fixed step (ms a frame, 0 = real time, above 10 s
+ * = paused), +0x18 minimum step. Real time since the last tick is added, at least +0x18 (renderer init at
+ * 0x34A26 sets it through sub_00096520 to 1000/30 on NTSC) and at most 100 ms. Cutscene scripts set the fixed
+ * step through sub_00213E40 (via sub_000676A0) and read it back with sub_001E7640.
+ * HPPOA_CLOCK_LOG=1: [CLOCK] every 5 s (2: every second), game ms against real ms. */
+#define GAME_CLOCK 0x0038BA6Cu
+
+static uint64_t mono_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
+}
+
+/* HPPOA_FPS=60 (overlay: Display > Frame Rate, from the next start): every frame on the next vblank. */
+static int fps60(void)
+{
+    static int v = -1;
+    if (v < 0) {
+        const char *e = getenv("HPPOA_FPS");
+        v = e && atoi(e) == 60;
+        fprintf(stderr, "[fps] frame rate: %s\n", v ? "60 (HPPOA_FPS=60)" : "the title's 30");
+    }
+    return v;
+}
+
+/* 60 fps and the clock (after HP3-Recompiled's hle_video.c and HP-POA's hle_clock.c, MIT; facts only):
+ * - the minimum step: at 30 fps a frame is 33 ms and the title's floor (33) is real time; at 60 every frame
+ *   is shorter than it and the clock would gain 33 ms a 16.7 ms frame (double speed). The floor becomes 1 ms
+ *   and the clock follows real time (HP3-Recompiled measured a 10 ms floor running 1.1-1.3x: a short frame
+ *   puts the clock ahead and the next tick's negative step reads as a 100 ms hitch).
+ * - the fixed step: a cutscene's script sets ms a frame (33) so the scene is locked to the frame count; at
+ *   60 the step is split over two frames (16, 17, the odd ms carried) and the getter answers the script's
+ *   own value, which the title saves and puts back. */
+static uint32_t s_fixed;    /* the fixed step as the title set it (0 = real time) */
+static uint32_t s_carry;
+
+extern void sub_00213E40_gen(void);
+void sub_00213E40(void)     /* a class's +0x14 setter, thiscall ([esp+4] = value) */
+{
+    if (ecx == GAME_CLOCK) {
+        uint32_t v = MEM32(esp + 4);
+        static int log = -1;
+        if (log < 0) { const char *e = getenv("HPPOA_CLOCK_LOG"); log = e && *e == '1'; }
+        if (log && v != s_fixed) fprintf(stderr, "[CLOCK] fixed step %u ms (from %08X)\n", v, MEM32(esp));
+        s_fixed = v, s_carry = 0;
+    }
+    sub_00213E40_gen();
+}
+
+extern void sub_001E7640_gen(void);
+void sub_001E7640(void)     /* a class's +0x14 getter, thiscall */
+{
+    uint32_t obj = ecx;
+    sub_001E7640_gen();
+    if (obj == GAME_CLOCK && fps60())
+        eax = s_fixed;
+}
+
+static void clock_before_tick(uint32_t clk)
+{
+    if (!fps60()) return;
+    MEM32(clk + 0x18) = 1;
+    if (s_fixed && s_fixed <= 10000u) {
+        uint32_t total = s_fixed + s_carry, step = total / 2;
+        s_carry = total % 2;
+        MEM32(clk + 0x14) = step ? step : 1;    /* 0 would mean real time */
+    }
+}
+
+/* ── Cutscenes ──────────────────────────────────────────────────────────
+ *
+ * The cutscene manager (singleton 0x365EA8, made by sub_000616A0): +0x8C the cutscene playing (0 none),
+ * +0x99 it may be skipped. The Apt (Flash) native SkipCutscene (sub_0001FB90) runs sub_00061520(this,
+ * force): with a cutscene playing that is skippable (or forced) it ends it (sub_00062170) and answers
+ * CutsceneSkipped true to the menu. HPPOA_CUTSCENE_LOG=1 logs both. */
+#define CUTSCENES 0x00365EA8u
+static int cutscene_log(void)
+{
+    static int v = -1;
+    if (v < 0) { const char *e = getenv("HPPOA_CUTSCENE_LOG"); v = e && *e == '1'; }
+    return v;
+}
+/* Skip Cutscenes (overlay: Tweaks, HPPOA_SKIP_CUTSCENES, on unless 0): Start or Back while a cutscene plays
+ * ends it the game's own way, sub_00061520(this, force = 1) -> sub_00062170, the path the menu's SkipCutscene
+ * takes for a skippable one; forced, so the ones the title marks unskippable (+0x99 = 0, the train's first) end
+ * too. The press is asked for in XInputGetState and kept from the game while the cutscene plays (Start would
+ * pause it); the skip itself runs on the game's thread at the next clock tick, before the frame's tasks. */
+static volatile int s_skip_req;
+static int skip_cutscenes_on(void)
+{
+    const char *e = getenv("HPPOA_SKIP_CUTSCENES");
+    return !(e && *e == '0');
+}
+static int cutscene_playing(void) { return MEM32(CUTSCENES + 0x8C) != 0; }
+extern void sub_00061520(void);
+static void cutscene_watch(void)
+{
+    static uint32_t last_cs, last_sk;
+    uint32_t cs = MEM32(CUTSCENES + 0x8C), sk = MEM8(CUTSCENES + 0x99);
+    if (cutscene_log() && (cs != last_cs || sk != last_sk))
+        fprintf(stderr, "[cutscene] %08X skippable %u (game ms %u, wall %llu ms)\n", cs, sk, MEM32(GAME_CLOCK + 4),
+                (unsigned long long)mono_ms());
+    last_cs = cs, last_sk = sk;
+    if (s_skip_req) {
+        s_skip_req = 0;
+        if (cs) {
+            uint32_t s_esp = esp, s_eax = eax, s_ebx = ebx, s_ecx = ecx, s_edx = edx, s_esi = esi, s_edi = edi,
+                     s_ebp = g_ebp;
+            esp -= 4; MEM32(esp) = 1;           /* force */
+            esp -= 4; MEM32(esp) = 0;           /* return address, unused */
+            ecx = CUTSCENES;
+            sub_00061520();
+            fprintf(stderr, "[cutscene] %08X skipped (skippable %u): %s\n", cs, sk, (eax & 0xFF) ? "ended" : "refused");
+            esp = s_esp; eax = s_eax; ebx = s_ebx; ecx = s_ecx; edx = s_edx; esi = s_esi; edi = s_edi; g_ebp = s_ebp;
+        }
+    }
+}
+extern void sub_0001FB90_gen(void);
+void sub_0001FB90(void)
+{
+    uint32_t cs = MEM32(CUTSCENES + 0x8C), sk = MEM8(CUTSCENES + 0x99);
+    sub_0001FB90_gen();
+    if (cutscene_log()) fprintf(stderr, "[cutscene] SkipCutscene native: cutscene %08X skippable %u\n", cs, sk);
+}
+
+extern void sub_001A7450_gen(void);
+void sub_001A7450(void)
+{
+    static int log = -1;
+    static uint64_t real0;
+    static uint32_t game0, frames0, clamps, floors, callers[4], ticks[4];
+    uint32_t clk = ecx, before, caller = MEM32(esp);
+    int k;
+
+    if (clk != GAME_CLOCK) { sub_001A7450_gen(); return; }
+    clock_before_tick(clk);
+    cutscene_watch();
+    before = MEM32(clk + 4);
+    sub_001A7450_gen();
+    if (log < 0) { const char *e = getenv("HPPOA_CLOCK_LOG"); log = e ? atoi(e) : 0; }
+    if (!log) return;
+    for (k = 0; k < 4 && callers[k] && callers[k] != caller; k++) {}
+    if (k < 4) callers[k] = caller, ticks[k]++;
+    if (MEM32(clk + 4) - before == 100u) clamps++;
+    if (MEM32(clk + 4) - before == MEM32(clk + 0x18) && !MEM32(clk + 0x14)) floors++;
+    {
+        static uint64_t last; static int shown;
+        uint64_t t = mono_ms();
+        if (last && t - last < 3 && shown < 3) {
+            uint32_t i, n = 0;
+            shown++;
+            fprintf(stderr, "[CLOCK] tick %llu ms after the last, stack:", (unsigned long long)(t - last));
+            for (i = 0; i < 128 && n < 12; i++) {
+                uint32_t v = MEM32(esp + i * 4);
+                if (v > 0x11000u && v < 0x264C80u) { fprintf(stderr, " %06X", v); n++; }
+            }
+            fprintf(stderr, "\n");
+        }
+        last = t;
+    }
+    {
+        uint64_t now = mono_ms();
+        if (!real0) { real0 = now; game0 = MEM32(clk + 4); frames0 = MEM32(clk); clamps = floors = 0; return; }
+        if (now - real0 < (log == 2 ? 1000u : 5000u)) return;
+        fprintf(stderr, "[CLOCK] wall %llu: %u ticks, game %u ms in %llu real ms (x%.3f), floor %u fixed %u, "
+                        "%u ticks at the floor, %u of 100 ms; from %08X x%u %08X x%u %08X x%u\n",
+                (unsigned long long)now, MEM32(clk) - frames0, MEM32(clk + 4) - game0, (unsigned long long)(now - real0),
+                (double)(MEM32(clk + 4) - game0) / (double)(now - real0), MEM32(clk + 0x18), MEM32(clk + 0x14),
+                floors, clamps, callers[0], ticks[0], callers[1], ticks[1], callers[2], ticks[2]);
+        memset(callers, 0, sizeof callers); memset(ticks, 0, sizeof ticks);
+        real0 = now; game0 = MEM32(clk + 4); frames0 = MEM32(clk); clamps = floors = 0;
+    }
+}
+
+/* ── Skip Logo Movies (overlay: Tweaks, HPPOA_SKIP_LOGOS=1) ───────────────
+ *
+ * The boot script plays its movies through PlayMovie (sub_001AC0A0, thiscall, ret 8: the name as
+ * "<Movie>%s.mad" spells it, and a flag): eac_usa (EA), wb, then intro. PlayMovie marks the movie object
+ * playing and makes the player ([0x364120], sub_0005DBE0); each frame the main loop asks the player whether it
+ * is still going (sub_0005DE00) and, once it is not, runs StopMovie (sub_001AC100), which is what the script
+ * waits for. So a logo still goes through PlayMovie and its player is stopped at once with the player's own
+ * stop (sub_0005DC90, cdecl, no argument): the next frame ends it the game's way. Returning without PlayMovie
+ * would leave the script waiting on a movie that never ends (HP-POA-Xbox-Recomp's hle_video.c, MIT; facts
+ * only). intro (the story's opening) still plays. */
+#define MOVIE_PLAYER 0x00364120u
+extern void sub_001AC0A0_gen(void);
+extern void sub_0005DC90(void);
+void sub_001AC0A0(void)
+{
+    uint32_t name = MEM32(esp + 4);
+    const char *e = getenv("HPPOA_SKIP_LOGOS");
+    int skip = 0;
+    if (name && e && *e == '1') {
+        const char *n = (const char *)XBOX_PTR(name);
+        skip = strcasecmp(n, "wb") == 0 || strncasecmp(n, "eac", 3) == 0;
+    }
+    sub_001AC0A0_gen();
+    if (skip && MEM32(MOVIE_PLAYER)) {
+        uint32_t s_esp = esp, s_eax = eax, s_ebx = ebx, s_ecx = ecx, s_edx = edx, s_esi = esi, s_edi = edi;
+        esp -= 4; MEM32(esp) = 0;       /* return address, unused */
+        sub_0005DC90();
+        esp = s_esp; eax = s_eax; ebx = s_ebx; ecx = s_ecx; edx = s_edx; esi = s_esi; edi = s_edi;
+        fprintf(stderr, "[movie] logo %s skipped (HPPOA_SKIP_LOGOS=1)\n", (const char *)XBOX_PTR(name));
+    }
+}
 
 /* ── Controllers: XAPI's XInput answered from the host pad ─────────────
  *
@@ -474,6 +699,15 @@ void sub_002C0BA6(void)
         }
         MEM32(st) = s_xi[i].packet;
         MEM16(st + 4) = rep[2];
+        if (s_xi[i].port == 0) {
+            static uint8_t was;
+            uint8_t now = rep[2] & 0x30u;       /* Start, Back */
+            if (skip_cutscenes_on() && cutscene_playing()) {
+                if (now & ~was) s_skip_req = 1;
+                MEM16(st + 4) = rep[2] & ~0x30u;    /* kept from the game */
+            }
+            was = now;
+        }
         for (k = 0; k < 8; k++) MEM8(st + 6 + k) = rep[4 + k];
         for (k = 0; k < 8; k++) MEM8(st + 14 + k) = rep[12 + k];
         eax = 0;

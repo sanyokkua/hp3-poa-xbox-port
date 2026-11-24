@@ -7,7 +7,7 @@ Sorcerer's Stone port's tree ([hp1-xbox-port](https://github.com/sanyokkua/hp1-x
 shared with those games. Per the HP3-Recompiled notes, this game is **EA UK's engine** (the same family as the PS2 Chamber of
 Secrets), not Eurocom's (CoS) and not Warthog's (HP1).
 
-Status: **step 2 done: XDK glue in, boots through the EA/WB logos and `intro.mad` to "Press START", the main menu, New Game, the Hogwarts Express cutscene and controllable play in the train corridor (Harry walks with the left stick) about 75 s after start. No hook for movies, loading or the game yet.**
+Status: **step 3 done: boots to the train level (Flipendo tutorial) with sound (music, speech, effects measured), the game clock at console speed (30 fps), a 60 fps option, Skip Logo Movies and Skip Cutscenes (overlay rows). Saves and later levels not tried yet.**
 
 ## Sources (pinned)
 
@@ -137,6 +137,56 @@ Blockers, in the order they showed (`tools/run_test.sh`, scripted pad):
 Checked and fine: the KTIMER lost-expiry race of HP3-Recompiled's toolkit (movies did not hang; the game clock runs), no white frames in the
 shots. Remaining `[UNIMPL]` no-ops: `in al,dx 0x26DF7D` (vblank handler, port `0x80C0`, as in NFSU2), `pushfd/popfd 0x159676/0x159680`
 (around a call, flags unused after), `wbinvd 0x26BC74`, `out dx,al 0x26EE90`, `cli/sti 0x2C6401/0x2C6412`.
+
+## 1c. Step 3: audio, game speed, 60 fps, logo and cutscene skips (done)
+
+Test route (`build/t/train_script.txt`): Start at 55/58 s, A every 4 s from 62 to 118 s, left stick up from 125 s: title,
+New Game, the Hogwarts Express cutscene, the corridor, the luggage car and the Flipendo prompt by 160 s.
+
+1. **Audio plays (measured, no fix needed).** `RECOMP_AUDIO_DUMP=<file>,0,165` (the PCM handed to the Mac, 48 kHz s16 stereo)
+   over the route, RMS a second: logos 0-8 s (RMS 400-1900), legal screen silent, `intro.mad` 15-55 s (RMS 2300-5900, peak
+   11,400-11,900 from the output limiter), menu 58-70 s (RMS 180-1700, harmonic lines in the spectrogram: music), load
+   silent 71-74 s, cutscene 75-95 s (RMS 600-1300), corridor 96-136 s (RMS 400-1000), luggage car 137-165 s (RMS 700-2300).
+   Zero-crossing rate 0.02-0.08 everywhere (noise would be about 0.5). A 0-4 kHz spectrogram of the cutscene shows voiced
+   speech (harmonic stacks with moving pitch, 4-5 syllables a second). `fe.mus`, `hogex.mus` and the `english/speech/*.sdt`
+   banks are read. 0 underruns, 0 dropped blocks, APU at 1500 frames/s (real time). None of the CoS audio faults (DSOUND heap
+   VA, bit-26 tag, streaming hold) shows here.
+2. **Game speed is the console's (measured, no fix needed).** Hook on the frame timer `sub_001A7450` (this = `0x38BA6C`;
+   its layout, checked in the disassembly: `+0` ticks, `+4` game ms, `+8` last step, `+0x14` fixed step, `+0x18` minimum
+   step, at most 100 ms a tick). `HPPOA_CLOCK_LOG=1` prints game ms against wall ms every 5 s (`=2`: every second). Over the
+   route at the default rate: 29.8-29.9 fps (`RECOMP_FPS_LOG=1`), game clock x0.999-x1.001 in every window of menus, the
+   cutscene and play; the floor is 33 ms (NTSC). One exception, the New Game load (below).
+3. **The load before the train cutscene runs the game clock 22-150x for about a second** (open, not changed). The main
+   loop (`sub_001161A0`, tick from `0x115CF9`) spins without presenting while the level loads: 1,300-2,400 ticks in a
+   second, each at least the 33 ms floor, so the clock gets ahead of real time and the next tick's step goes negative,
+   which the timer reads as a 100 ms hitch (half the ticks are 100 ms). Game time jumps 80-150 s; the next window is x1.000
+   again (the timer re-bases its origin). The cutscene manager has the scene set at that moment, but it plays its 25 s at
+   x1.000 afterwards with speech in step (spectrogram), so nothing visible was found. On the single-core console the same
+   loop also spins while the loader waits on the DVD, so this may be the console's behaviour too. HP-POA-Xbox-Recomp's fix
+   (`hle_clock.c`: a tick with no frame since the last one sleeps 1 ms with a 1 ms floor) is the candidate if a symptom shows.
+4. **60 fps** (`HPPOA_FPS=60`, overlay Display > Frame Rate, from the next start). Present's NOP trap word is
+   `(interval << 5) | 1` as in CoS/NFSU (`49980141`: 2 vblanks): the PGRAPH handler hook rewrites it to 1 vblank.
+   Alone that would run the game at double speed (33 ms floor a 16.7 ms frame). The clock: the minimum step becomes 1 ms
+   each tick (HP3-Recompiled's measured choice: a 10-16 ms floor puts the clock ahead after a short frame and the next tick
+   steps 100 ms); a cutscene's fixed step (setter `sub_00213E40`, getter `sub_001E7640`, both checked: `mov [ecx+0x14],v;
+   ret 4` / `mov eax,[ecx+0x14]; ret`) is split over two frames with the odd ms carried, and the getter answers the
+   script's own value (HP-POA-Xbox-Recomp). Evidence over the route: `[fps] flip interval 2 -> 1 vblank`, 59.6-60.0 fps,
+   game clock x1.000 in every window but the load, screenshots identical to 30 fps (`build/t/c60/sheet.png`). No cutscene
+   on the route sets a fixed step (no `[CLOCK] fixed step` line), so the split is untested here. Not ported:
+   HP-POA-Xbox-Recomp's lip-sync follow (needs their host mixer's voice levels) and the Carpe Retractum ledge step at 60 fps
+   (`sub_000CDFB0`, a level far from the train): both listed as open.
+5. **Skip Logo Movies** (`HPPOA_SKIP_LOGOS=1`, overlay Tweaks). PlayMovie `sub_001AC0A0` (thiscall, `ret 8`, name then a
+   flag) runs as always and for `eac*` and `wb` the player `[0x364120]` is stopped at once with `sub_0005DC90` (the stop
+   StopMovie uses), so the next frame ends the movie the game's way. Evidence: `[movie] logo EAC_USA skipped`, `logo wb
+   skipped`, `intro.mad` on screen at 20 s instead of 30 s.
+6. **Skip Cutscenes** (`HPPOA_SKIP_CUTSCENES`, on unless 0, overlay Tweaks). The cutscene manager is the singleton
+   `0x365EA8` (`sub_000616A0`): `+0x8C` the cutscene playing, `+0x99` skippable. The Apt native SkipCutscene (`0x1FB90`,
+   called when A is pressed in a cutscene) runs `sub_00061520(this, force)`, which ends a skippable or forced one with
+   `sub_00062170` and sets the menu's `CutsceneSkipped`. The train's first cutscene is not skippable (A: native called,
+   nothing happens). Start or Back while `+0x8C` is set now asks for a forced skip, run on the game thread at the next
+   clock tick; the press is hidden from the game while the cutscene plays (Start would pause). Evidence (`build/t/cs3`):
+   `[cutscene] 8220EA14 skipped (skippable 0): ended` at the Start press, Harry in the corridor with the HUD 2 s later,
+   play and the pause menu work after it. `HPPOA_CUTSCENE_LOG=1` logs the manager's state and the native.
 
 ## 1. Phase 2: the to-do (items 1 done above)
 
