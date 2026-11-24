@@ -229,6 +229,34 @@ New Game, the Hogwarts Express cutscene, the corridor, the luggage car and the F
    Backport candidate: run `tools/immscan.py` on every Xbox port (NFSU1, NFSU2, HP1, CoS): any "free" hit is a silent
    `[ICALL]` miss waiting for its state.
 
+2. **#5 Handling "not smooth enough".** Measured (`HPPOA_MOVE_LOG=1`, new: a `[move]` line a tick with game ms, step, the
+   stick as the game sees it and Harry's position at player `+0x4EC`; `=scan` lists the player's changing floats; the
+   player is player 0's handle in the character table `[0x3660C8]+0xE6`, object `[0x3BDCF0 + handle*4]`):
+   - Game side: the poll `sub_00229F90` turns each axis into `(v + 0.5) / 32767.5` and zeroes it under 0.25 per axis
+     (`0x2ED468`); the rest drift in the owner's log (LX -594, LY 2174 = 0.02/0.07) never reaches the game. Triggers: an
+     analog button counts as held above 1 (`cmp dl,1; seta`), ours are 0..255 (SDL >> 7): fine.
+   - 30 vs 60 fps, same scripted walk from the dormitory start (`build/t/mv30`, `mv60`, `build/t/move_script.txt`): the
+     steps are 33/34 ms and 16/17 ms with no stray ticks while walking; Harry moves a fixed 19.55 units a tick at 30 and
+     9.78 at 60, i.e. the same 575-611 units per game second, starts moving 0.3-0.4 s after the push at both, and the
+     motion per displayed frame is even. No frame-rate dependence found in walking speed or start-up. Input is fresh:
+     XInputGetState reads SDL's state each call, and the main thread's event wait pumps the pads (SDL 3's periodic
+     poll while joysticks are open).
+   - **Defect: the stick range compensation.** `stick_range` (from CoS) made a push to 65 % read as full on every pad.
+     In the owner's play log 92 % of the 7,212 moving stick readings were at full magnitude: the game's walk band
+     (its 0.35 dead zone up to the run at 0.675, per HP-POA-Xbox-Recomp) sat in 23-44 % of the travel, so Harry jumped
+     from a stop to a run and could hardly walk. Fix (`stick_deadzone.h`, after HP-POA-Xbox-Recomp's learned
+     compensation, MIT, facts only): each of 8 directions learns the furthest the stick has reached (at least 0.60);
+     a reading is scaled by its direction's reach. A full-range pad keeps its whole travel, a short pad (0.67 straight
+     back) still reaches full there. `RECOMP_STICK_RANGE=<fraction>` keeps a fixed range, `1` turns it off. Tests:
+     `engine/xboxrecomp/tests/stick_deadzone` (7 new checks; written first, failed, then pass). Not verified with the
+     owner's pad (scripted sticks are full pushes, unchanged by either rule).
+   - Not changed: upstream's "Responsive movement" (turn speeds x2, no shuffle/pivot wait, instant run) is a
+     deliberate change from the console's feel, not a port defect; a candidate setting if the owner still finds it slow.
+   Backport candidate: the learned range in every port that has CoS's fixed 0.65 (`stick_deadzone.h`: HP1, CoS, NFSU1, NFSU2
+   if they took it).
+3. **`[pad]` lines off by default in `tools/play_dev.sh`** (11,340 of the 58,301 lines in the owner's log); `HPPOA_PAD_LOG=1`
+   brings them back.
+
 ## 1. Phase 2: the to-do (items 1 done above)
 
 1. Lift: `engine/tools/regen.sh` with this XBE (`LIFT_ONLY=1` to skip the disassembly). Seeds are empty; start from the facts in
