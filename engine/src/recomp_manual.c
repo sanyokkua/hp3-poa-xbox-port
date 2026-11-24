@@ -996,3 +996,83 @@ void recomp_unimpl(const char *text, uint32_t va)
     }
     if (stop) abort();
 }
+
+/* Dev: HPPOA_TM_LOG=1 logs D3DDevice_SetTransform (0x2672C0, stdcall type, matrix; XDK types: view 0,
+ * projection 1, texture 2-5, world 6-9) for the texture matrices, with the caller (shadow fade mask, PORTING 1d). */
+extern void sub_002672C0_gen(void);
+void sub_002672C0(void)
+{
+    static int lg = -1;
+    if (lg < 0) { const char *e = getenv("HPPOA_TM_LOG"); lg = e && *e == '1'; }
+    if (lg) {
+        uint32_t t = MEM32(esp + 4), m = MEM32(esp + 8);
+        static int n;
+        static const float id[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+        extern volatile int nv2a_mtl_capture;
+        if (t >= 2 && t <= 5 && n < 4000 && nv2a_mtl_capture > 0 && memcmp((const void *)XBOX_PTR(m), id, sizeof id)) {
+            int i;
+            n++;
+            fprintf(stderr, "[tm] type %u ret %08X caller %08X", t, MEM32(esp), MEM32(esp) == 0x0002F62Au ? MEM32(esp + 24) : 0);
+            for (i = 0; i < 16; i++) { uint32_t u = MEM32(m + 4 * i); float f; memcpy(&f, &u, 4); fprintf(stderr, " %.5g", f); }
+            fputc('\n', stderr);
+            if (MEM32(esp) == 0x0002F62Au && MEM32(esp + 24) == 0x0004AD63u) {
+                uint32_t bp = MEM32(esp + 20), r60 = ebx - 0x60, v48 = bp - 0x48;
+                fprintf(stderr, "[tm] rec60");
+                for (i = 0; i < 16; i++) { uint32_t u = MEM32(r60 + 4 * i); float f; memcpy(&f, &u, 4); fprintf(stderr, " %.5g", f); }
+                fprintf(stderr, "\n[tm] m48");
+                for (i = 0; i < 16; i++) { uint32_t u = MEM32(v48 + 4 * i); float f; memcpy(&f, &u, 4); fprintf(stderr, " %.5g", f); }
+                fputc('\n', stderr);
+            }
+        }
+    }
+    sub_002672C0_gen();
+}
+
+/* Dev: differential test of the lifted code (tools/difftest.py), as hpcos-xbox-port's. HPPOA_DIFF_DIR=<dir> and
+ * HPPOA_DIFF_AT="n1,n2,..." (calls of the shadow matrix builder sub_00048DC0, counted from the first) write
+ * <dir>/<n>_pre.bin and <n>_post.bin around those calls: registers, x87 state, guest memory (main RAM from
+ * 0x10000, then the 64 MB contiguous window). */
+extern size_t xbox_GetMappedSize(void);
+static unsigned s_diff_n;
+static int diff_due(void)
+{
+    static int on = -1, nat; static unsigned at[64];
+    if (on < 0) {
+        const char *e = getenv("HPPOA_DIFF_AT");
+        on = getenv("HPPOA_DIFF_DIR") && e;
+        while (on && e && *e && nat < 64) { at[nat++] = (unsigned)strtoul(e, NULL, 10); e = strchr(e, ','); if (e) e++; }
+    }
+    if (!on) return 0;
+    s_diff_n++;
+    for (int i = 0; i < nat; i++) if (at[i] == s_diff_n) return 1;
+    return 0;
+}
+static void diff_capture(const char *tag)
+{
+    char fn[600]; FILE *f;
+    struct {
+        char magic[4]; uint32_t ver; uint32_t r[8]; int32_t fp_top; uint32_t fp_cw; double fp[8];
+        uint32_t main_lo, main_size, contig_base, contig_size;
+    } h;
+    memcpy(h.magic, "HDIF", 4); h.ver = 1;
+    h.r[0] = eax; h.r[1] = ecx; h.r[2] = edx; h.r[3] = ebx; h.r[4] = esp; h.r[5] = g_ebp; h.r[6] = esi; h.r[7] = edi;
+    h.fp_top = g_fp_top; h.fp_cw = g_fp_control_word;
+    memcpy(h.fp, g_fp_stack, sizeof h.fp);
+    h.main_lo = 0x10000u; h.main_size = (uint32_t)xbox_GetMappedSize() - 0x10000u;
+    h.contig_base = 0x80000000u; h.contig_size = 64u << 20;
+    snprintf(fn, sizeof fn, "%s/%u_%s.bin", getenv("HPPOA_DIFF_DIR"), s_diff_n, tag);
+    if (!(f = fopen(fn, "wb"))) return;
+    fwrite(&h, sizeof h, 1, f);
+    fwrite((const void *)XBOX_PTR(h.main_lo), 1, h.main_size, f);
+    fwrite((const void *)XBOX_PTR(h.contig_base), 1, h.contig_size, f);
+    fclose(f);
+    fprintf(stderr, "[diff] %s\n", fn);
+}
+extern void sub_00048DC0_gen(void);
+void sub_00048DC0(void)
+{
+    int now = diff_due();
+    if (now) diff_capture("pre");
+    sub_00048DC0_gen();
+    if (now) diff_capture("post");
+}

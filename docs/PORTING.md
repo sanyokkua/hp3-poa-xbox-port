@@ -268,6 +268,30 @@ frame, for scripted runs), and `[dl]` prints stage 0's texture coordinates (`uv0
    console). "Frame cut off on the right": the frame's quads span x -0.5..639.5 and the parchment band is whole at both
    edges (`build/t/evidence/options_glyphs_unfixed.png`); the dark band on the left is the menu art, not a clip.
 
+4. **Round 2 (after the merge of fix/render, fix/game, fix/perf; 2026-11-24).**
+   - Merged main checked: relift 21,754 functions, stubcheck 32 stubs / 0 real code; route at `HPPOA_FPS=60`
+     (`build/t/A_route/sheet.png`: logos, menu, cutscene, corridor, luggage car), dormitory runs (`build/t/A_trunk60`,
+     `build/t/A_wander`, 250 s): 0 `[ICALL]`, `shader language 3.0`, no crash. The scripted walk no longer reaches the
+     trunk (the learned stick range and shorter loads move Harry elsewhere); `sub_000B6170` and the other 7 seeds are
+     in the lift.
+   - **Floor shadow "missing" after the fade-mask fix: correct, no change.** Measured: (a) the mask as drawn (`RECOMP_DL_RT=827C0000`,
+     per-vertex diffuse): strip rows 0 -> 30.4 from (0,0,0,0) to white, white to row 32, `LINE_STRIP` at y 31 with
+     (0,0,0,0): row 0 black, row 31 black, as HP-POA-Xbox-Recomp describes the console's. (b) The receivers' v (stage 1,
+     texture matrix row 1 on the eye position, `RECOMP_DL_TEXGEN=1` prints `inmap N v1 a..b` = v over the vertices
+     inside the shadow map): 0.19-0.33 in the luggage car, so mask alpha 0.2-0.3 x the caster's 0.5 (combiner: map alpha
+     = c0.a 0.5; receiver alpha = map.a x mask.a): a 10-15 % darkening. (c) The matrix comes from the game:
+     D3D `SetTransform` (`0x2672C0`, `HPPOA_TM_LOG=1`) from `sub_0004A3C0` (`0x4AD63`) = view inverse x the shadow
+     record's matrix built by `sub_00048DC0`; difftest of `sub_00048DC0` (`HPPOA_DIFF_DIR`/`HPPOA_DIFF_AT`, 3 calls):
+     no difference beyond float rounding in the record (the other differences are other threads' stacks). (d) xemu
+     reference frames (`.wt/xemu_ref/xemu_96s.png`, `xemu_104s.png`, `xemu_192s.png`): no clear floor shadow under Harry,
+     none on walls or ceilings, the green lock-on ring as ours (`xemu_88s.png`). The "before" floor shadow was the
+     old mask's alpha 1. Frame structure seen with `RECOMP_SURF_TRACE=1` (surface methods in order with `[dl]`):
+     each caster group clears the 256x256 map, draws its casters, switches to the screen, draws its receivers.
+   - Dev aids added: `RECOMP_SURF_TRACE=1`, `RECOMP_DL_TEXGEN=1` (generated coordinates, combiner registers),
+     `RECOMP_DL_RT=<va>` (every draw into one target, any frame), `RECOMP_DUMP_ALPHA=1` (dumps write alpha as grey),
+     `HPPOA_TM_LOG=1`, `HPPOA_DIFF_DIR`/`HPPOA_DIFF_AT` (difftest capture around `sub_00048DC0`; run
+     `tools/difftest.py` with a venv that has unicorn, e.g. hpcos-xbox-port's).
+
 ## 1f. Play test 1: gameplay fixes (2026-11-24, `.wt/PLAYTEST1.md`)
 
 1. **#7 Dormitory trunk: Harry searches it forever.** Symptom (recording 20.21.09 at 5:15-6:00, and again after Load Game):

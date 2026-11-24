@@ -3465,7 +3465,9 @@ static void mtl_draw_raw_inner(const Nv2aRawBatch *b)
                 fprintf(stderr, "[capture] done\n");
         }
         fidx++;
-        if ((dl >= 0 && (int)s_frame >= dl && (int)s_frame < dl + dl_n) || capturing()) {
+        static int dlrt = -1; static uint32_t dlrt_va;   /* hppoa: RECOMP_DL_RT=<va>: every draw into that target */
+        if (dlrt < 0) { const char *e = getenv("RECOMP_DL_RT"); dlrt = e != NULL; if (e) dlrt_va = (uint32_t)strtoul(e, NULL, 16); }
+        if ((dl >= 0 && (int)s_frame >= dl && (int)s_frame < dl + dl_n) || capturing() || (dlrt && b->color_va == dlrt_va)) {
             uint32_t k;
             fprintf(stderr, "[dl] f%u #%u prim %u n %u attrs %04X xform %u comb %08X %08X",
                     s_frame, fidx, b->prim, n, b->attr_present, b->xform, r[0x1E60 / 4], r[0x1E70 / 4]);
@@ -3532,6 +3534,71 @@ static void mtl_draw_raw_inner(const Nv2aRawBatch *b)
             if (b->vp_consts) fprintf(stderr, " | c58 %g %g c59 %g %g", b->vp_consts[58][0], b->vp_consts[58][1],
                                       b->vp_consts[59][0], b->vp_consts[59][1]);
             fprintf(stderr, " | z %u %u %X", r[0x30C / 4], r[0x35C / 4], r[0x354 / 4]);
+            if (getenv("RECOMP_DL_TEXGEN") && b->xform == 1) {   /* hppoa: generated coordinates of vertices 0..2 */
+                uint32_t vi, st, c, j;
+                const float *mv = (const float *)&r[0x480 / 4];
+                for (vi = 0; vi < 3 && vi < b->vertex_count; vi++) {
+                    float p4[4] = { 0, 0, 0, 1 }, e4[4];
+                    attr_to_float4(b, 0, vi, p4);
+                    for (c = 0; c < 4; c++) e4[c] = mv[c * 4] * p4[0] + mv[c * 4 + 1] * p4[1] + mv[c * 4 + 2] * p4[2] + mv[c * 4 + 3] * p4[3];
+                    fprintf(stderr, " | p%u %.4g,%.4g,%.4g eye %.4g,%.4g,%.4g", vi, p4[0], p4[1], p4[2], e4[0], e4[1], e4[2]);
+                    for (st = 0; st < 4; st++) {
+                        uint32_t g0 = r[(0x3C0 + st * 16) / 4];
+                        float t4[4] = { 0, 0, 0, 1 }, o4[4];
+                        if (!g0) continue;
+                        for (c = 0; c < 4; c++) {
+                            uint32_t g = r[(0x3C0 + st * 16 + c * 4) / 4];
+                            const float *pl = (const float *)&r[(0x840 + st * 64 + c * 16) / 4];
+                            if (g == 0x2400) t4[c] = pl[0] * e4[0] + pl[1] * e4[1] + pl[2] * e4[2] + pl[3] * e4[3];
+                            else if (g == 0x2401) t4[c] = pl[0] * p4[0] + pl[1] * p4[1] + pl[2] * p4[2] + pl[3] * p4[3];
+                        }
+                        memcpy(o4, t4, sizeof o4);
+                        if (r[(0x420 + st * 4) / 4]) {
+                            const float *tm = (const float *)&r[(0x6C0 + st * 64) / 4];
+                            for (c = 0; c < 4; c++) { o4[c] = 0; for (j = 0; j < 4; j++) o4[c] += tm[c * 4 + j] * t4[j]; }
+                        }
+                        fprintf(stderr, " T%u %.4g,%.4g,%.4g,%.4g", st, o4[0], o4[1], o4[2], o4[3]);
+                    }
+                }
+                if (r[(0x3C0 + 16) / 4] && b->vertex_count > 3) {   /* stage 1 v over the vertices inside stage 0's map */
+                    float vmin = 1e9f, vmax = -1e9f; uint32_t nin = 0;
+                    for (vi = 0; vi < b->vertex_count; vi++) {
+                        float p4[4] = { 0, 0, 0, 1 }, e4[4], o0[4], o1[4];
+                        const float *tm0 = (const float *)&r[0x6C0 / 4], *tm1 = (const float *)&r[(0x6C0 + 64) / 4];
+                        attr_to_float4(b, 0, vi, p4);
+                        for (c = 0; c < 4; c++) e4[c] = mv[c * 4] * p4[0] + mv[c * 4 + 1] * p4[1] + mv[c * 4 + 2] * p4[2] + mv[c * 4 + 3] * p4[3];
+                        for (c = 0; c < 4; c++) {
+                            o0[c] = tm0[c * 4] * e4[0] + tm0[c * 4 + 1] * e4[1] + tm0[c * 4 + 2] * e4[2] + tm0[c * 4 + 3] * e4[3];
+                            o1[c] = tm1[c * 4] * e4[0] + tm1[c * 4 + 1] * e4[1] + tm1[c * 4 + 2] * e4[2] + tm1[c * 4 + 3] * e4[3];
+                        }
+                        if (o0[3] != 0) { o0[0] /= o0[3]; o0[1] /= o0[3]; }
+                        if (o1[3] != 0) { o1[1] /= o1[3]; }
+                        if (o0[0] >= 0 && o0[0] <= 1 && o0[1] >= 0 && o0[1] <= 1) {
+                            nin++; if (o1[1] < vmin) vmin = o1[1]; if (o1[1] > vmax) vmax = o1[1];
+                        }
+                    }
+                    fprintf(stderr, " | inmap %u v1 %.3g..%.3g", nin, vmin, vmax);
+                }
+                fprintf(stderr, " | psh aI %08X %08X aO %08X %08X cI %08X %08X cO %08X %08X fin %08X %08X f0 %08X %08X f1 %08X %08X",
+                        r[0x260 / 4], r[0x264 / 4], r[0xAA0 / 4], r[0xAA4 / 4], r[0xAC0 / 4], r[0xAC4 / 4],
+                        r[0x1E40 / 4], r[0x1E44 / 4], r[0x288 / 4], r[0x28C / 4], r[0xA60 / 4], r[0xA64 / 4],
+                        r[0xA80 / 4], r[0xA84 / 4]);
+                {   static int once; if (!once++) for (st = 0; st < 2; st++) {
+                        const float *tm = (const float *)&r[(0x6C0 + st * 64) / 4];
+                        const float *pl = (const float *)&r[(0x840 + st * 64) / 4];
+                        fprintf(stderr, "\n[dlt] st%u tm", st);
+                        for (c = 0; c < 16; c++) fprintf(stderr, " %.4g", tm[c]);
+                        fprintf(stderr, " planes");
+                        for (c = 0; c < 16; c++) fprintf(stderr, " %.4g", pl[c]);
+                    } }
+            }
+            if (b->vertex_count <= 6 && (b->attr_present & 8))
+                for (k = 0; k < b->vertex_count; k++) {   /* hppoa: each vertex's diffuse */
+                    float q[4] = { 0, 0, 0, 0 };
+                    if (b->attr_direct & 8) attr_to_float4(b, 3, k, q);
+                    else if (b->attrs) memcpy(q, b->attrs + k * 64 + 12, sizeof q);
+                    fprintf(stderr, " d%u %.3g,%.3g,%.3g,%.3g", k, q[0], q[1], q[2], q[3]);
+                }
             if (getenv("RECOMP_DL_ALLVERTS") && b->vertex_count > 6 && !(r[(0x1B00 + 0x0C) / 4] & 0x40000000u)) {
                 for (k = 0; k < b->vertex_count; k++) {
                     float q[4] = { 0, 0, 0, 0 };
@@ -3989,8 +4056,12 @@ static void dump_bmp(const char *path, const uint8_t *bgra, uint32_t w, uint32_t
     fwrite(hdr, 1, 54, f);
     for (y = h; y-- > 0; ) {
         const uint8_t *p = bgra + (size_t)y * w * 4;
-        for (x = 0; x < w; x++)
-            fwrite(p + x * 4, 1, 3, f);
+        for (x = 0; x < w; x++) {
+            static int al = -1;   /* hppoa: RECOMP_DUMP_ALPHA=1 writes the alpha channel as grey */
+            if (al < 0) { const char *e = getenv("RECOMP_DUMP_ALPHA"); al = e && *e == '1'; }
+            if (al) { uint8_t g[3] = { p[x * 4 + 3], p[x * 4 + 3], p[x * 4 + 3] }; fwrite(g, 1, 3, f); }
+            else fwrite(p + x * 4, 1, 3, f);
+        }
         fwrite("\0\0\0", 1, pad, f);
     }
     fclose(f);

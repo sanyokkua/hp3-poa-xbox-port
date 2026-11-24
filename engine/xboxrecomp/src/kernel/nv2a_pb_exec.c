@@ -4485,6 +4485,16 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
         note_unhandled(method, param);
         return;
     }
+    {   /* hppoa: RECOMP_SURF_TRACE=1: surface methods during an F12/`capture` draw log, in order with [dl] */
+        extern volatile int nv2a_mtl_capture, nv2a_mtl_capture_frames;
+        static int st = -1;
+        if (st < 0) { const char *e = getenv("RECOMP_SURF_TRACE"); st = e && *e == '1'; }
+        if (st && nv2a_mtl_capture >= 1 && nv2a_mtl_capture <= nv2a_mtl_capture_frames &&
+            (method == 0x0200 || method == 0x0204 || method == 0x0208 || method == 0x020C || method == 0x0210 ||
+             method == 0x0214 || method == 0x0194 || method == 0x0198 || method == 0x1D94 || method == 0x0300 ||
+             method == 0x0304 || method == 0x0358 || method == 0x030C || method == 0x035C))
+            fprintf(stderr, "[surf] %04X %08X\n", method, param);
+    }
     switch (method) {
     case NV097_SET_SURFACE_CLIP_HORIZONTAL:
         s_gpu.clip_raw_h = param;
