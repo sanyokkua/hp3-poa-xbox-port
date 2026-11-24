@@ -15,3 +15,5 @@ Version 0.0.1: the port is started; nothing runs yet.
 - The runtime's launch-data title id now comes from the XBE certificate (was a fixed `0x45410091`); the DSOUND range comes from
   `engine/src/region_profile.h`.
 - References: HP-POA-Xbox-Recomp and HP3-Recompiled (see `docs/upstream-patches/README.md`).
+- Fixed: searching the trunk in the Gryffindor dormitory no longer gets stuck (8 functions referenced only from state-table
+  initializers were never lifted; seeded, found with the new `tools/immscan.py`).

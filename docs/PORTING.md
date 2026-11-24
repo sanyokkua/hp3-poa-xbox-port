@@ -207,6 +207,28 @@ New Game, the Hogwarts Express cutscene, the corridor, the luggage car and the F
    2500-4800 of the train route (860,489 draws) and 1,100 frames of the dormitory (498,938 draws) has only triangle strips
    (prim 6); no line draw was found to test a fix against.
 
+## 1d. Play test 1 fixes (2026-11-24, `.wt/PLAYTEST1.md`)
+
+1. **#7 Dormitory trunk: Harry searches it forever.** Symptom (recording 20.21.09 at 5:15-6:00, and again after Load Game):
+   A at the red "H.P." trunk, Harry opens it and stays bent over it; no card, no next step. The owner's `build/play/last.log`:
+   2,464 `[ICALL] Failed to resolve VA 0x000B6170`, the first in the frame A was pressed, then one per frame (call site
+   `sub_000BB670`, return `0xBB635`), plus one `0x000B97B0` on the train (from `sub_000B7870`). Root cause: both are member
+   functions the static pass never found. Their only reference is a static initializer that fills a state table
+   (`0x260764`: `mov eax, 0xB6170; mov [0x2FE5A0], eax`; state `0x1F`'s slots at `0x2FE590`), an immediate in code, not a
+   data dword, so neither the call graph nor the data-pointer scan saw them. The ICALL miss returns without running the
+   state's update, so the search state never ends. Fix: `tools/immscan.py` (new: `push imm32`/`mov eax, imm32` pointing at
+   code after `int3`/`ret` padding that is no function start) listed 8; all real code by `seedcheck.py`, all seeded
+   (94 seeds): `0xB3AC0`, `0xB6170`, `0xB67A0`, `0xB97B0`, `0xF9AE0` (state-table member functions), `0xB9390` (after
+   padding inside `0xB9306`'s span), `0x1915C0` (callback pushed at `0x1922AF`), `0x26E140` (D3D callback stored at
+   `0x26F02A`). Relift: 21,754 functions, stubcheck 32 stubs, 0 real code; `immscan` now lists only 4 non-code hits
+   (`0x4003D`, `0x8C25D`: int3 runs inside data immediates; `0x292638`: a string; `0x2A80BA`: an SEH label). Evidence: the same
+   scripted run (`build/t/trunk_script.txt`, `HPPOA_START_CHAPTER=1`, walk to the trunk spamming A) on d6c6489: Harry stuck
+   bent over the open trunk from 106 s to the end at 130 s, 763 `0xB6170` misses; with the seeds: he takes a collector's card
+   out, the hint "Complete collector's card sets for extra rewards" shows, play goes on, 0 ICALL misses
+   (`build/t/t7old`, `build/t/t7new`). `tools/run_test.sh` takes `HPPOA_BIN=<binary>` for such A/B runs.
+   Backport candidate: run `tools/immscan.py` on every Xbox port (NFSU1, NFSU2, HP1, CoS): any "free" hit is a silent
+   `[ICALL]` miss waiting for its state.
+
 ## 1. Phase 2: the to-do (items 1 done above)
 
 1. Lift: `engine/tools/regen.sh` with this XBE (`LIFT_ONLY=1` to skip the disassembly). Seeds are empty; start from the facts in
@@ -272,8 +294,8 @@ Not applied to the other repos (rule: an engine fix found in one Xbox port goes 
 ## 2. Tools
 
 Dev scripts (inherited): `tools/stubcheck.py` (is any empty stub real code), `tools/run_test.sh <name> <secs> <shot times>`
-(a scripted run with screenshots), `tools/sheet.sh`, `tools/seedcheck.py` (is every seed an instruction start), `tools/addseed.py`,
-`tools/relift.sh`, `tools/play_dev.sh` (play in a window, own HOME), `tools/sigmatch.py`, `tools/xdis.py`. Configure
+(a scripted run with screenshots; `HPPOA_BIN=` runs another binary), `tools/sheet.sh`, `tools/seedcheck.py` (is every seed an instruction start), `tools/addseed.py`,
+`tools/relift.sh`, `tools/immscan.py` (functions referenced only by an immediate), `tools/play_dev.sh` (play in a window, own HOME), `tools/sigmatch.py`, `tools/xdis.py`. Configure
 (as `tools/build_release.sh` does): `engine/tools/regen.sh`, then CMake with `-DNFSU2_GEN_DIR=engine/gen`, target `hppoa_recomp`.
 
 ## 3. Not verified / open issues (after step 3)
