@@ -205,9 +205,70 @@ New Game, the Hogwarts Express cutscene, the corridor, the luggage car and the F
    but they are one host pixel wide, a third of a console pixel at the default 3x scale (HP3-Recompiled draws each segment
    as a quad one console pixel wide because PoA's shadow fade mask needs it). Not changed: `RECOMP_DRAW_LOG` over frames
    2500-4800 of the train route (860,489 draws) and 1,100 frames of the dormitory (498,938 draws) has only triangle strips
-   (prim 6); no line draw was found to test a fix against.
+   (prim 6); no line draw was found to test a fix against. (Later, 1d item 1: the mask's line was dropped by the executor before
+   the back end, which is why none showed.)
 
-## 1d. Play test 1 fixes (2026-11-24, `.wt/PLAYTEST1.md`)
+## 1d. Play test 1: rendering
+
+Owner's play test 1 (`.wt/PLAYTEST1.md`): issues 1 (shadows on walls and ceilings), 6 (lock-on marker), the dormitory light
+smears and blobs: one root cause, fixed. Issues 2 (Malfoy's face) and 4 (Options "(" glyphs): open, evidence below.
+Dev aids added: overlay script action `capture` (`NFSU2_OVERLAY_SCRIPT="102:capture"`: the F12 `[dl]` draw log of the next
+frame, for scripted runs), and `[dl]` prints stage 0's texture coordinates (`uv0..`) for draws of 6 vertices or fewer.
+
+1. **Shadows on walls, ceilings, bed canopies; lock-on marker missing; dormitory light smears (fixed).**
+   - Symptom: Harry's projected shadow far from him on corridor walls, the dining car ceiling, the dormitory bed canopy and the
+     luggage car wall; vertical light smears and glow spots on the dormitory walls and floor; no ring around a Flipendo target.
+   - How the shadow works (draw log, `capture`): the character silhouettes go into a 256x256 A8R8G8B8 target (`0x8277F000`,
+     alpha = silhouette); each receiver is drawn again with stage 0 = that map (eye-linear texgen, texture matrix: an
+     orthographic projection along the light) and stage 1 = a 16x32 **fade mask** (`0x827C0000`, clamp), whose v is the
+     receiver's depth along the light (texture matrix row 1: `0.0019 x + 0.0023 y - 0.0016 z + 1.507` in eye space). Combiner:
+     alpha = map.a x mask.a, blended over the scene. The mask is drawn once per level: a triangle strip from black (top) to
+     white (row 30) and a one-segment `LINE_STRIP` that writes the last row black, so a receiver beyond the range (clamped
+     to the last row) gets no shadow.
+   - NV2A root cause, three executor bugs (`kernel/nv2a_pb_exec.c`), all in how the mask is submitted (`SET_VERTEX4F`,
+     fixed-function mode, positions 0..1 through the composite matrix `16 0 0 0 / 0 -32 0 32`):
+     (a) `batch_is_ffp()` excluded inline and `SET_VERTEX` batches, so they were drawn as screen positions: the strip
+     covered one pixel and the mask kept alpha 1 everywhere: every receiver in the map's projection got the full shadow, at
+     any depth. On the NV2A the transform mode alone decides (D3D's pre-transformed vertices use its pass-through vertex
+     program, mode 2). (b) Diffuse sent as `SET_VERTEX_DATA4F(3)` (D3D `SetVertexData4f`) was ignored; only the 4UB form set
+     the immediate colour, so the strip and line came out white. (c) Inline and `SET_VERTEX` batches of fewer than three
+     vertices were dropped, and with them the closing line (2 vertices). That is why step 3's draw log found no lines:
+     they never reached the back end.
+   - The same rule (a) drew the game's other inline world-space quads at pixel coordinates: the dormitory's light shafts and
+     glows (`[dl]` draws 223-225: 100-unit tall quads at x -107..383, y 600..841, blob texture) became the vertical smears,
+     and the spell target ring and dust sprites (world x ~2000) went off screen.
+   - Fix (commit `006d8a3`): inline/immediate batches are transformed in fixed-function mode (`RECOMP_INLINE_FF=0` restores
+     the old rule), `SET_VERTEX_DATA4F(3)` sets the immediate diffuse, a batch needs 1 vertex for points, 2 for lines.
+   - Evidence: the mask dump (`RECOMP_GL_DUMP_SURF=827C0000`) went from alpha `F` in all 32 rows to the ramp `0 0 1 1 2 ... e
+     f f 0` (last row black). Before/after (before = `RECOMP_INLINE_FF=0`, same binary, same script):
+     `build/t/evidence/luggage_wall_shadow_and_lockon_before_after.png` (wall silhouette gone, green target ring back),
+     `dorm_canopy_shadow_blobs_before_after.png` (canopy shadow and wall glows gone), `dorm_light_smears_before_after.png`.
+     Route run `build/t/route1/sheet.png` (logos, menu, New Game, cutscene, corridor, luggage car, Flipendo prompt) matches
+     main's `build/t/final/sheet.png`; dormitory and pause/Options `build/t/dorm4/sheet.png`; no crash.
+   - Not verified against a console: how strong the remaining shadows should be. Receivers under the silhouette now get
+     t = 0.2-0.8 in the luggage car (a faint shadow) and about 1.9 on the dormitory floor (none). The mask's content (ramp
+     plus closing row) matches HP3-Recompiled's note that the console's mask has the line in its last row.
+   - Line width: the mask target is stored at 1x vertically (`offscreen_scale` keeps targets under 512x384 at 1x), so the
+     one-pixel Metal line fills the console row here. Lines into upscaled targets are still one host pixel wide.
+2. **Malfoy's face and hair blink orange in the dining car cutscene (open).** Not reproduced: the cutscene follows the
+   Malfoy fight, which the scripted route does not reach (`HPPOA_START_CHAPTER=0:41/43/44` hang on the loading screen). The
+   train's first cutscene (`capture` at 80/86/92 s) has no character draw whose stage 1 texture is stage 0's (the pattern
+   HP-POA-Xbox-Recomp's `NoSecondSkinPass` removes); its characters use stage 1 for the window light (`0x819FB400`,
+   eye-linear texgen) only. HP-POA-Xbox-Recomp works at the D3D level; their cause (a stage 1 MODULATE2X left over from
+   the previous object, sampling the face's own texture) is state the NV2A would also see, so the console should square
+   the skin too unless something in our path differs (stale texture contents at a reused address, draw merging). Next
+   step: a save or warp into the dining car, then `capture` on a blinking and a normal frame and diff stage 1's texture.
+3. **Options screen: "(" glyphs at the right of the Vibration and Subtitles rows (open).** Root of the glyph found, not
+   why: the "Off" text quad (`[dl]`, title Options and pause Options) spans x 466..605 with u 0..**1.086** on a 128x64 P8
+   text texture (format `06710B29`) with WRAP addressing (`00010101`); u 1.0-1.086 wraps to texels 0-11, the left half of
+   the "O" of "Off": the "(". Every other text quad on the screen has u <= 1 on a texture at least the field's width
+   (292 px on 512, 175 on 256, 103 on 128); only this 139 px field got a 128 texture. The textures are not made through
+   `CreateTexture2` (`0x26AB00`) or `XGSetTextureHeader` (`0x29D2A8`) (logged); the Apt text code writes the header
+   itself, not found yet. Suspect a lifted-code difference in the size chosen for that field (it would be 256 on the
+   console). "Frame cut off on the right": the frame's quads span x -0.5..639.5 and the parchment band is whole at both
+   edges (`build/t/evidence/options_glyphs_unfixed.png`); the dark band on the left is the menu art, not a clip.
+
+## 1f. Play test 1: gameplay fixes (2026-11-24, `.wt/PLAYTEST1.md`)
 
 1. **#7 Dormitory trunk: Harry searches it forever.** Symptom (recording 20.21.09 at 5:15-6:00, and again after Load Game):
    A at the red "H.P." trunk, Harry opens it and stays bent over it; no card, no next step. The owner's `build/play/last.log`:
@@ -358,20 +419,26 @@ Not applied to the other repos (rule: an engine fix found in one Xbox port goes 
 2. **Kernel: `XC_FACTORY_AV_REGION` (0x103) answers NTSC-M `0x00400100`** (`kernel_xbox.c`). It was 0 in every port; any title that
    calls `XGetVideoStandard` saw "no standard" (PoA: PAL frame floor). Harmless for titles that never read it.
 3. **Check, not a fix yet: NV2A lines are one host pixel wide in the Metal path** (`nv2a_metal.m`, `prim_indices` maps them to
-   `MTLPrimitiveTypeLine`). Upscaled, a console line is 3-4 host pixels; a title that masks with lines (HP3-Recompiled: PoA's shadow
-   fade mask) gets gaps. Count line draws with `RECOMP_DRAW_LOG` in each port before widening them (PoA's tested scenes have none).
+   `MTLPrimitiveTypeLine`). Upscaled, a console line is 3-4 host pixels; a title that masks with lines into an upscaled target gets
+   gaps. PoA's one line (the shadow fade mask, 1d item 1) goes into a 16x32 target kept at 1x vertically, so it is whole.
 4. **Method: game clock against wall time** (`HPPOA_CLOCK_LOG`, the frame timer hook in `recomp_manual.c`). Each port's 60 fps
    option should be checked the same way (game ms / wall ms per window, ticks without a frame).
-5. **Metal: compile with MSL 3.0, not the OS default** (`nv2a_metal.m`, `s_copts.languageVersion`; section 1d). On macOS 27 a
+5. **Metal: compile with MSL 3.0, not the OS default** (`nv2a_metal.m`, `s_copts.languageVersion`; section 1e). On macOS 27 a
    combiner shader takes ~540 ms at the default 4.1 and ~43 ms at 3.0; every port shares this renderer and the same cold-compile
    stall (NFSU1, NFSU2, HP1, CoS). Copy the block and the hitch line's pipeline count; check that `shader language 3.0` is
    logged and no `shader failed` lines appear over each port's routes.
 
-5. **Missed functions referenced only by an immediate** (`tools/immscan.py <repo>`, read-only on another port): PoA had 8
+6. **Missed functions referenced only by an immediate** (`tools/immscan.py <repo>`, read-only on another port): PoA had 8
    (#7, the trunk). Run on the other ports' current `functions.json` (2026-11-24): HP1 0 and CoS 0 hits; NFSU2 3
    (`0x4C25D`, `0x10C2C9`, `0x119144`) and NFSU1 about 30 at `0x1BDxxx..0x1BE8xx` (pushed from `0x30xxx..0x4Cxxx`, likely
    string or table pointers in `.text`): to be checked with `seedcheck.py` there before seeding.
-6. **Learned stick range** (`stick_deadzone.h`, `stick_range_at`; 1d item 2) for every port with CoS's fixed 0.65.
+7. **Learned stick range** (`stick_deadzone.h`, `stick_range_at`; 1f item 2) for every port with CoS's fixed 0.65.
+8. **Executor: inline/`SET_VERTEX` batches in fixed-function mode are transformed; `SET_VERTEX_DATA4F` diffuse; 2-vertex
+   lines and 1-vertex points kept** (`kernel/nv2a_pb_exec.c`: `batch_is_ffp`, `imm_vertex_method`, `prim_min_vertices`;
+   commit `006d8a3`, 1d item 1). Every port's executor has the old `!s_gpu.inline_active` rule (NFSU2, CoS checked). Any title that
+   draws world-space quads, particles or masks with D3D's immediate mode (`Begin`/`SetVertexData4f`/`End`) in fixed-function mode
+   lost them (drawn as pixel coordinates, mostly off screen). Before backporting, run each port's route with `RECOMP_INLINE_FF=0`
+   and without and compare: 2D drawn that way in fixed-function mode with a stale composite matrix would move.
 
 ## 2. Tools
 
@@ -390,7 +457,9 @@ Dev scripts (inherited): `tools/stubcheck.py` (is any empty stub real code), `to
 - **Skip Cutscenes** forces the skip on cutscenes the title marks unskippable (the train's first); only that one was tested.
   Its last subtitle line stays on screen for about a second after the skip.
 - **Load Game screen**: the slot names showed a moment after the screen (one shot had an empty list); not checked further.
-- **NV2A lines** one host pixel wide (step 3, item 8); no line draws in the tested scenes.
+- **NV2A lines** one host pixel wide (step 3, item 8); PoA's one line (the shadow fade mask) lands whole (1d item 1).
+- **Play test 1 open items** (1d): Malfoy's orange/blinking face (not reproduced), the Options "(" glyphs (wrapped u on a too
+  small text texture; the size choice not found).
 - **Renderer** not checked: fog, W-buffer bit of CONTROL0, post-effect thresholds (CoS's).
 - **Host pad in scripted tests**: a controller connected to the Mac also drives the overlay during `tools/run_test.sh` runs (one run's
   settings were changed that way); check `[overlay] open` in a test log.

@@ -3550,6 +3550,15 @@ static void mtl_draw_raw_inner(const Nv2aRawBatch *b)
                     float q[3]; memcpy(q, b->direct[0].ptr + k * b->direct[0].stride, 12);
                     fprintf(stderr, " v%u %.4g,%.4g,%.4g", k, q[0], q[1], q[2]);
                 }
+            if (b->vertex_count <= 6 && (b->attr_present & 0x200))
+                for (k = 0; k < b->vertex_count; k++) {   /* stage 0's texture coordinates (attribute 9) */
+                    float q[4] = { 0, 0, 0, 0 };
+                    if (b->attr_direct & 0x200)
+                        attr_to_float4(b, 9, k, q);
+                    else if (b->attrs)
+                        memcpy(q, b->attrs + k * 64 + 36, sizeof q);
+                    fprintf(stderr, " uv%u %.4g,%.4g", k, q[0], q[1]);
+                }
             fputc('\n', stderr);
         }
         if (sk && fidx >= sa && fidx <= sb)
