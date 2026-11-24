@@ -327,14 +327,14 @@ Not applied to the other repos (rule: an engine fix found in one Xbox port goes 
 3. **Check, not a fix yet: NV2A lines are one host pixel wide in the Metal path** (`nv2a_metal.m`, `prim_indices` maps them to
    `MTLPrimitiveTypeLine`). Upscaled, a console line is 3-4 host pixels; a title that masks with lines into an upscaled target gets
    gaps. PoA's one line (the shadow fade mask, 1d item 1) goes into a 16x32 target kept at 1x vertically, so it is whole.
+4. **Method: game clock against wall time** (`HPPOA_CLOCK_LOG`, the frame timer hook in `recomp_manual.c`). Each port's 60 fps
+   option should be checked the same way (game ms / wall ms per window, ticks without a frame).
 5. **Executor: inline/`SET_VERTEX` batches in fixed-function mode are transformed; `SET_VERTEX_DATA4F` diffuse; 2-vertex
    lines and 1-vertex points kept** (`kernel/nv2a_pb_exec.c`: `batch_is_ffp`, `imm_vertex_method`, `prim_min_vertices`;
    commit `006d8a3`, 1d item 1). Every port's executor has the old `!s_gpu.inline_active` rule (NFSU2, CoS checked). Any title that
    draws world-space quads, particles or masks with D3D's immediate mode (`Begin`/`SetVertexData4f`/`End`) in fixed-function mode
    lost them (drawn as pixel coordinates, mostly off screen). Before backporting, run each port's route with `RECOMP_INLINE_FF=0`
    and without and compare: 2D drawn that way in fixed-function mode with a stale composite matrix would move.
-4. **Method: game clock against wall time** (`HPPOA_CLOCK_LOG`, the frame timer hook in `recomp_manual.c`). Each port's 60 fps
-   option should be checked the same way (game ms / wall ms per window, ticks without a frame).
 
 ## 2. Tools
 
