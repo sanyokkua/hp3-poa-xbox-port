@@ -66,6 +66,227 @@ typedef void (*recomp_func_t)(void);
 
 extern ptrdiff_t g_xbox_mem_offset;
 
+/* ── XDK 5849 glue ────────────────────────────────────────────
+ *
+ * The same XDK as NFS Underground 2: every address below was found with
+ * tools/sigmatch.py from NFSU2's hook and checked instruction by instruction
+ * (tools/xdis.py, branch targets aside, identical): docs/PORTING.md, step 2. */
+
+/* ── CRT memmove/memcpy (0x0013E2F0, 0x0013FF20) ──────────────
+ *
+ * Two copies of the MSVC CRT memmove (memcpy is the same body). Their tail and
+ * backward-copy paths dispatch through vectors indexed with a negative
+ * register, which the lifter cannot follow: copies lost their tail. Replaced by
+ * the host memmove. cdecl (dst, src, count), returns dst. */
+static void crt_memmove(void)
+{
+    uint32_t dst = MEM32(esp + 4);
+    uint32_t src = MEM32(esp + 8);
+    uint32_t n   = MEM32(esp + 12);
+
+    if (n)
+        memmove((void *)XBOX_PTR(dst), (const void *)XBOX_PTR(src), n);
+    eax = dst;
+    esp += 4;   /* return address; cdecl, the caller pops the arguments */
+}
+
+void sub_0013E2F0(void) { crt_memmove(); }
+void sub_0013FF20(void) { crt_memmove(); }
+
+/* ── D3D fence wait, D3D_BlockOnTime (0x0026C540) ────────────
+ *
+ * stdcall (fence, flags), ret 8. Device through the global at 0x00275FE8:
+ *   +0x2C  write sequence, +0x30  pointer to the GPU's semaphore.
+ * With the pushbuffer executor (RECOMP_PB_EXEC) the real semaphore is handed to
+ * it once and the original wait runs; without it the GPU is reported caught up. */
+#define HPPOA_D3D_DEVICE_PTR 0x00275FE8u
+extern void nv2a_pb_set_semaphore_target(uint32_t guest_va);
+extern void sub_0026C540_gen(void);
+
+void sub_0026C540(void)
+{
+    static int exec = -1;
+    uint32_t dev = MEM32(HPPOA_D3D_DEVICE_PTR);
+    uint32_t sem = dev ? MEM32(dev + 0x30) : 0;
+
+    if (exec < 0)
+        exec = getenv("RECOMP_PB_EXEC") != NULL;
+    if (exec) {
+        static uint32_t registered;
+        if (sem && sem != registered) {
+            nv2a_pb_set_semaphore_target(sem);
+            fprintf(stderr, "[D3D] GPU semaphore at 0x%08X\n", sem);
+            registered = sem;
+        }
+        sub_0026C540_gen();
+        return;
+    }
+    if (sem)
+        MEM32(sem) = MEM32(dev + 0x2C);     /* "GPU" is always caught up */
+    eax = 0;
+    esp += 4 + 8;                           /* return address, 2 stdcall args */
+}
+
+/* ── D3D interrupt handlers at DISPATCH_LEVEL ────────────────
+ *
+ * D3D services the GPU from its DPC (0x0026E6B0) and, with the interrupt
+ * masked, from its own busy-waits on the game thread: both call the vblank
+ * handler (0x0026DF00) and the PGRAPH handler (0x0026E470). On the Xbox the two
+ * never interleave; here the DPC runs on the kernel timer thread, and a flip
+ * whose target vblank moved past while it was computed stayed pending forever
+ * (NFSU2's hang). Run both at DISPATCH_LEVEL, letting the guest lock go for the
+ * raise as a kernel call would. */
+extern uint8_t xbox_KfRaiseIrql(uint8_t irql);
+extern void xbox_KfLowerIrql(uint8_t irql);
+extern uint8_t xbox_CurrentIrql(void);
+extern int xbox_gil_suspend(void);
+extern void xbox_gil_resume(int depth);
+extern void xbox_Nv2aVblankTaken(void);
+extern void nv2a_pb_flip_retired(unsigned n);
+
+static uint8_t d3d_isr_enter(void)
+{
+    uint8_t old = xbox_CurrentIrql();
+
+    if (old < 2) {
+        int d = xbox_gil_suspend();
+        old = xbox_KfRaiseIrql(2);
+        xbox_gil_resume(d);
+    }
+    return old;
+}
+
+static void d3d_isr_leave(uint8_t old)
+{
+    if (old < 2)
+        xbox_KfLowerIrql(old);
+}
+
+/* Vblank handler, thiscall; flips retired = D3D's retire index at +0x1BC of the
+ * block in ecx (read at DISPATCH only, so a retire is never counted twice). */
+extern void sub_0026DF00_gen(void);
+
+void sub_0026DF00(void)
+{
+    uint32_t blk = ecx;
+    uint8_t old = d3d_isr_enter();
+    uint32_t head = MEM32(blk + 0x1BC);
+
+    xbox_Nv2aVblankTaken();
+    sub_0026DF00_gen();
+    nv2a_pb_flip_retired(MEM32(blk + 0x1BC) - head);
+    d3d_isr_leave(old);
+}
+
+/* PGRAPH handler, thiscall, ecx = the device's hardware block. Takes a
+ * software-method trap (NOP(5) sets BlockOnTime's event, a flip trap queues the
+ * flip); the executor posts traps under a lock held here, and a call that found
+ * one reports it taken (nv2a_pb_exec.c). The title's flip interval is kept. */
+extern void sub_0026E470_gen(void);
+extern void nv2a_pb_trap_lock(void);
+extern void nv2a_pb_trap_unlock(void);
+extern void nv2a_pb_trap_taken(void);
+
+void sub_0026E470(void)
+{
+    volatile uint32_t *nv = (volatile uint32_t *)XBOX_PTR(0xFD000000u);
+    uint32_t blk = ecx;
+    uint8_t old = d3d_isr_enter();
+    uint32_t nsource, head;
+
+    nv2a_pb_trap_lock();
+    head = MEM32(blk + 0x1BC);
+    nsource = nv[0x400108 / 4];
+    {   /* HPPOA_TRAP_LOG=1: each PGRAPH handler call */
+        static int lg = -1;
+        if (lg < 0) { const char *e = getenv("HPPOA_TRAP_LOG"); lg = e && *e == '1'; }
+        if (lg) fprintf(stderr, "[trap] PGRAPH handler: NSOURCE %08X INTR %08X ADDR %08X DATA %08X\n",
+                        nsource, nv[0x400100 / 4], nv[0x400704 / 4], nv[0x400708 / 4]);
+    }
+    sub_0026E470_gen();
+    nv2a_pb_flip_retired(MEM32(blk + 0x1BC) - head);
+    if (nsource)
+        nv2a_pb_trap_taken();
+    nv2a_pb_trap_unlock();
+    d3d_isr_leave(old);
+}
+
+/* ── DirectSound DSP command post (0x002B8B0D) ───────────────
+ *
+ * thiscall. Stores a command code at scratch + 0x810 (scratch = ***(this+8+0x10))
+ * and spins until the DSP zeroes it. There is no DSP: register the word with
+ * the runtime's completion list, then run the original. */
+extern int xbox_ApuDspAckWord(uint32_t va);
+extern void sub_002B8B0D_gen(void);
+
+void sub_002B8B0D(void)
+{
+    uint32_t obj = MEM32(ecx + 8);
+    uint32_t blk = obj ? MEM32(obj + 0x10) : 0;
+    uint32_t scratch = blk ? MEM32(blk) : 0;
+
+    if (scratch)
+        xbox_ApuDspAckWord(scratch + 0x810);
+    sub_002B8B0D_gen();
+}
+
+/* ── DirectSound AC'97 channel reset (0x002BE412) ────────────
+ *
+ * thiscall, ecx = channel object. Sets RR (bit 1) in the channel's NABM control
+ * byte (NABM base table 0x002BF060, byte at base + 0xFEC0010B), then waits for it
+ * to clear -- but the load is hoisted out of the loop (0x2BE43F, loop 0x2BE448),
+ * so it spins on a register copy forever. Same function with the reset done at
+ * once; the lock (0x2B6710/0x2B6732), the descriptor base store, the 0xFEC0017C
+ * write for channel 1 and the re-arm (0x2BE21C) are as the original. */
+void sub_002BE412(void)
+{
+    uint32_t ebp_saved = g_ebp, frame, chan, nabm;
+
+    PUSH32(esp, ebp_saved);
+    frame = esp;
+    g_ebp = frame;
+    g_seh_ebp = frame;
+    esp -= 8;
+    MEM32(frame - 4) = 0;
+    PUSH32(esp, esi);
+    esi = ecx;
+    chan = esi;
+
+    ecx = frame - 8;
+    PUSH32(esp, 0x002BE426u); RECOMP_ABI_CALL(0x002B6710u, sub_002B6710);
+
+    nabm = MEM32(MEM32(chan) * 4 + 0x002BF060u);
+    MEM8(nabm + 0xFEC0010Bu) = 2;
+    MEM8(nabm + 0xFEC0010Bu) &= (uint8_t)~2u;   /* reset complete */
+    eax = nabm;
+    SET_LO8(ecx, 0);
+
+    MEM32(nabm + 0xFEC00100u) = MEM32(chan + 0x1C);
+    if (MEM32(chan) == 1)
+        MEM32(0xFEC0017Cu) = MEM32(chan + 0x28);
+
+    PUSH32(esp, 1);
+    PUSH32(esp, 1);
+    ecx = chan;
+    PUSH32(esp, MEM8(chan + 0x24));
+    PUSH32(esp, MEM8(chan + 0x25));
+    eax = MEM8(chan + 0x25);
+    g_ebp = frame;
+    g_seh_ebp = frame;
+    PUSH32(esp, 0x002BE479u); RECOMP_ABI_CALL(0x002BE21Cu, sub_002BE21C);
+
+    ecx = frame - 8;
+    g_ebp = frame;
+    g_seh_ebp = frame;
+    PUSH32(esp, 0x002BE481u); RECOMP_ABI_CALL(0x002B6732u, sub_002B6732);
+
+    POP32(esp, esi);
+    esp = frame;
+    POP32(esp, ebp_saved);
+    g_ebp = ebp_saved;
+    esp += 4;
+}
+
 
 /*
  * Return a function pointer to override the given Xbox VA, or NULL
