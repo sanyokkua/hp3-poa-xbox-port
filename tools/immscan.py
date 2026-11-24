@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """tools/immscan.py: missed functions referenced only by an immediate (push imm32 / mov eax, imm32) in code: static initializers
 that fill state tables with member-function pointers, callbacks pushed as arguments. Lists targets after int3/ret padding
-that are no function start in functions.json ("free" = no lifted code at all, a sure [ICALL] miss). Check with seedcheck.py; .venv."""
+that are no function start in functions.json ("free" = no lifted code at all, a sure [ICALL] miss). Check with seedcheck.py; .venv.
+Usage: tools/immscan.py [repo root, default this one]."""
 import sys, os, json, struct, re, bisect
-R = os.path.join(os.path.dirname(__file__), '..')
+R = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), '..')   # another port's root: read only
 sys.path.insert(0,os.path.dirname(__file__)); from sigmatch import load, read
 secs=load(os.path.join(R,'game/extracted/default.xbe'))
 fs=json.load(open(os.path.join(R,'engine/xboxrecomp/tools/disasm/output/functions.json')))
 rng=sorted((int(f['start'],16),int(f['end'],16)) for f in fs); st=[r[0] for r in rng]; starts=set(st)
-CODE=('.text','D3D','D3DX','XGRPH','DSOUND','XPP')
+CODE=('.text','D3D','D3DX','XGRPH','DSOUND','XPP','WMADEC','XACTENG','XNET','XONLINE')
 code=[(v,v+len(b)) for nm,v,vs,b in secs if nm in CODE]
 def incode(a): return any(s<=a<e for s,e in code)
 tot=0; out={}
