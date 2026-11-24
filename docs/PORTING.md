@@ -329,6 +329,12 @@ Not applied to the other repos (rule: an engine fix found in one Xbox port goes 
 4. **Method: game clock against wall time** (`HPPOA_CLOCK_LOG`, the frame timer hook in `recomp_manual.c`). Each port's 60 fps
    option should be checked the same way (game ms / wall ms per window, ticks without a frame).
 
+5. **Missed functions referenced only by an immediate** (`tools/immscan.py <repo>`, read-only on another port): PoA had 8
+   (#7, the trunk). Run on the other ports' current `functions.json` (2026-11-24): HP1 0 and CoS 0 hits; NFSU2 3
+   (`0x4C25D`, `0x10C2C9`, `0x119144`) and NFSU1 about 30 at `0x1BDxxx..0x1BE8xx` (pushed from `0x30xxx..0x4Cxxx`, likely
+   string or table pointers in `.text`): to be checked with `seedcheck.py` there before seeding.
+6. **Learned stick range** (`stick_deadzone.h`, `stick_range_at`; 1d item 2) for every port with CoS's fixed 0.65.
+
 ## 2. Tools
 
 Dev scripts (inherited): `tools/stubcheck.py` (is any empty stub real code), `tools/run_test.sh <name> <secs> <shot times>`
