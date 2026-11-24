@@ -288,6 +288,219 @@ void sub_002BE412(void)
 }
 
 
+/* ── Controllers: XAPI's XInput answered from the host pad ─────────────
+ *
+ * CoS's hook (from MiddleDucky/HP-PS-Xbox-Recomp's hle_input.c, MIT), addresses
+ * from HP-POA's hle_input.c and checked here: XInputOpen/Close/GetCapabilities/
+ * GetState match CoS's bodies by signature, SetState is the same code, and
+ * XInitDevices walks the driver table 0x2BF934..0x2BF944 as CoS's walks its own.
+ * The emulated OHCI pad does work for PoA's menus (HPPOA_XINPUT_USB=1 reaches the
+ * main menu as well); the direct path is kept as in CoS because XInputSetState
+ * there waits on the pad's interrupt OUT pipe, which never answers (CoS hung the
+ * first time Harry was hit), and HP-PS saw sticks arrive late. XGetDevices and
+ * XGetDeviceChanges stay XAPI's and read the device-type record kept below.
+ * HPPOA_XINPUT_USB=1 keeps XAPI's own bodies on the emulated USB. */
+#include <pthread.h>
+#define XPP_GAMEPAD_TYPE 0x002BF9F4u  /* g_DeviceType_Gamepad (class 0x401 record 0x2BFA2C): Current, Change, Previous */
+#define XPP_TYPES_BEGIN  0x002BF924u  /* the linked device type records, begin .. end */
+#define XPP_TYPES_END    0x002BF92Cu
+#define XI_HANDLE_BASE   0x5ADE0010u  /* opaque handles, never dereferenced by the title */
+#define XI_MAX_HANDLES   32
+#define XI_PORTS         2
+#define ARG(i)           MEM32(esp + 4u + 4u * (i))
+
+extern int usb_gamepad_connected(int dev);
+extern int usb_gamepad_report(int dev, uint8_t *out, int max);
+extern void usb_gamepad_output(int dev, const uint8_t *data, int len);
+extern void xbox_GuestSetEvent(uint32_t token);
+
+static pthread_mutex_t s_xi_lock = PTHREAD_MUTEX_INITIALIZER;
+static struct { int used; uint32_t port, packet; uint8_t last[16]; } s_xi[XI_MAX_HANDLES];
+
+static int xi_hle(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("HPPOA_XINPUT_USB");
+        on = !(e && *e == '1');
+        fprintf(stderr, "[input] XInput %s\n", on ? "from the host pad (direct)" : "through the emulated USB");
+    }
+    return on;
+}
+
+static void xi_update_ports(void)
+{
+    uint32_t cur = 0, old;
+    int p;
+    for (p = 0; p < XI_PORTS; p++)
+        if (usb_gamepad_connected(p))
+            cur |= 1u << p;
+    pthread_mutex_lock(&s_xi_lock);
+    old = MEM32(XPP_GAMEPAD_TYPE);
+    if (cur != old) {
+        __atomic_fetch_or((uint32_t *)XBOX_PTR(XPP_GAMEPAD_TYPE + 4), cur ^ old, __ATOMIC_SEQ_CST);
+        MEM32(XPP_GAMEPAD_TYPE) = cur;
+        fprintf(stderr, "[input] controller ports now %X (was %X)\n", cur, old);
+    }
+    pthread_mutex_unlock(&s_xi_lock);
+}
+
+static void *xi_poller(void *unused)
+{
+    (void)unused;
+    for (;;) {
+        usleep(250000);
+        xi_update_ports();
+    }
+    return NULL;
+}
+
+static int xi_index(uint32_t h)
+{
+    uint32_t i = (h - XI_HANDLE_BASE) / 16u;
+    if (h < XI_HANDLE_BASE || (h - XI_HANDLE_BASE) % 16u || i >= XI_MAX_HANDLES || !s_xi[i].used)
+        return -1;
+    return (int)i;
+}
+
+/* XInitDevices(dwPreallocTypeCount, PreallocTypes), ret 8. The pads arrive from
+ * the poller 250 ms in, as insertions, as on the console. */
+extern void sub_002BFC0C_gen(void);
+void sub_002BFC0C(void)
+{
+    static int poller;
+    uint32_t t;
+    int i;
+    if (!xi_hle()) { sub_002BFC0C_gen(); return; }
+    for (t = XPP_TYPES_BEGIN; t < XPP_TYPES_END; t += 4) {
+        uint32_t info = MEM32(t), type = info ? MEM32(info + 4) : 0;
+        if (type)
+            for (i = 0; i < 3; i++) MEM32(type + 4u * i) = 0;
+    }
+    for (i = 0; i < 3; i++) MEM32(XPP_GAMEPAD_TYPE + 4u * i) = 0;
+    if (!poller) {
+        pthread_t th;
+        poller = 1;
+        pthread_create(&th, NULL, xi_poller, NULL);
+        pthread_detach(th);
+    }
+    esp += 4 + 8;
+}
+
+/* XInputOpen(DeviceType, dwPort, dwSlot, pPollingParameters) -> HANDLE */
+extern void sub_002C096C_gen(void);
+void sub_002C096C(void)
+{
+    uint32_t type = ARG(0), port = ARG(1);
+    int i;
+    if (!xi_hle()) { sub_002C096C_gen(); return; }
+    eax = 0;
+    if (type == XPP_GAMEPAD_TYPE && port < XI_PORTS)
+        for (i = 0; i < XI_MAX_HANDLES; i++)
+            if (!s_xi[i].used) {
+                memset(&s_xi[i], 0, sizeof s_xi[i]);
+                s_xi[i].used = 1;
+                s_xi[i].port = port;
+                eax = XI_HANDLE_BASE + 16u * (uint32_t)i;
+                break;
+            }
+    fprintf(stderr, "[input] XInputOpen(port %u) = %08X\n", port, eax);
+    esp += 4 + 16;
+}
+
+/* XInputClose(hDevice) */
+extern void sub_002C09C2_gen(void);
+void sub_002C09C2(void)
+{
+    int i;
+    if (!xi_hle()) { sub_002C09C2_gen(); return; }
+    i = xi_index(ARG(0));
+    if (i >= 0) s_xi[i].used = 0;
+    esp += 4 + 4;
+}
+
+/* XInputGetCapabilities(hDevice, pCapabilities) */
+extern void sub_002C09CE_gen(void);
+void sub_002C09CE(void)
+{
+    uint32_t caps = ARG(1);
+    int i = xi_hle() ? xi_index(ARG(0)) : -2, k;
+    if (i == -2) { sub_002C09CE_gen(); return; }
+    if (i < 0) {
+        eax = 6;                                    /* ERROR_INVALID_HANDLE */
+    } else if (!usb_gamepad_connected((int)s_xi[i].port)) {
+        eax = 1167;                                 /* ERROR_DEVICE_NOT_CONNECTED */
+    } else {
+        MEM8(caps) = 1;                             /* XINPUT_DEVSUBTYPE_GC_GAMEPAD */
+        MEM8(caps + 1) = 0;
+        MEM16(caps + 2) = 0;
+        MEM16(caps + 4) = 0x00FF;
+        for (k = 0; k < 8; k++) MEM8(caps + 6 + k) = 0xFF;
+        for (k = 0; k < 4; k++) MEM16(caps + 14 + 2 * k) = 0xFFFF;
+        MEM16(caps + 22) = 0xFFFF;
+        MEM16(caps + 24) = 0xFFFF;
+        eax = 0;
+    }
+    esp += 4 + 8;
+}
+
+/* XInputGetState(hDevice, pState): packet number bumped when the report changes.
+ * HPPOA_PAD_LOG=1 logs every change. */
+extern void sub_002C0BA6_gen(void);
+void sub_002C0BA6(void)
+{
+    uint32_t st = ARG(1);
+    uint8_t rep[20];
+    int i = xi_hle() ? xi_index(ARG(0)) : -2, k;
+    if (i == -2) { sub_002C0BA6_gen(); return; }
+    int have = i >= 0 && usb_gamepad_connected((int)s_xi[i].port)
+            && usb_gamepad_report((int)s_xi[i].port, rep, (int)sizeof rep) >= 20;
+    if (i < 0) {
+        eax = 6;
+    } else if (!have) {
+        eax = 1167;
+    } else {
+        if (memcmp(rep + 2, s_xi[i].last, 16)) {
+            static int log = -1;
+            s_xi[i].packet++;
+            if (log < 0) { const char *e = getenv("HPPOA_PAD_LOG"); log = e && *e == '1'; }
+            if (log)
+                fprintf(stderr, "[pad] port %u buttons %02X analog %02X %02X %02X %02X %02X %02X %02X %02X"
+                        " LX %d LY %d RX %d RY %d\n", s_xi[i].port, rep[2], rep[4], rep[5], rep[6], rep[7],
+                        rep[8], rep[9], rep[10], rep[11], (int16_t)(rep[12] | rep[13] << 8),
+                        (int16_t)(rep[14] | rep[15] << 8), (int16_t)(rep[16] | rep[17] << 8),
+                        (int16_t)(rep[18] | rep[19] << 8));
+            memcpy(s_xi[i].last, rep + 2, 16);
+        }
+        MEM32(st) = s_xi[i].packet;
+        MEM16(st + 4) = rep[2];
+        for (k = 0; k < 8; k++) MEM8(st + 6 + k) = rep[4 + k];
+        for (k = 0; k < 8; k++) MEM8(st + 14 + k) = rep[12 + k];
+        eax = 0;
+    }
+    esp += 4 + 8;
+}
+
+/* XInputSetState(hDevice, pFeedback): rumble to the host pad, completes at once
+ * (XAPI would complete it from the pad's interrupt OUT pipe, which never answers
+ * here). XINPUT_FEEDBACK: { dwStatus, hEvent, ... }, XINPUT_RUMBLE at 0x42. */
+void sub_002C0C19(void)
+{
+    uint32_t fb = ARG(1);
+    int i = xi_index(ARG(0));
+    if (fb) {
+        uint8_t out[6] = { 0x00, 0x06, MEM8(fb + 0x42), MEM8(fb + 0x43), MEM8(fb + 0x44), MEM8(fb + 0x45) };
+        uint32_t event = MEM32(fb + 4);
+        usb_gamepad_output(i >= 0 ? (int)s_xi[i].port : 0, out, 6);
+        MEM32(fb) = 0;                              /* ERROR_SUCCESS */
+        if (event)
+            xbox_GuestSetEvent(event);
+    }
+    eax = 997;                                      /* ERROR_IO_PENDING, as XAPI returns */
+    esp += 4 + 8;
+}
+#undef ARG
+
 /*
  * Return a function pointer to override the given Xbox VA, or NULL
  * to fall through to the auto-generated dispatch table.

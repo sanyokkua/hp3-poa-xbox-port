@@ -314,5 +314,33 @@
  {
   "start": "0x001473BB",
   "note": "stubcheck round 3: BOUNDARY stub from sub_0014735D"
+ },
+ {
+  "start": "0x002C0507",
+  "note": "XPP: XInitDevices callback, ICALL failure at return 0x2BFC44 (data pointer in XPP)"
+ },
+ {
+  "start": "0x002C223D",
+  "note": "XPP: USB callback, ICALL failure at return 0x2C3D1F (data pointer in XPP)"
+ },
+ {
+  "start": "0x002C0E11",
+  "note": "XPP: data-referenced function after ret (pointer audit)"
+ },
+ {
+  "start": "0x002C17D8",
+  "note": "XPP: data-referenced function (pointer audit)"
+ },
+ {
+  "start": "0x002C182A",
+  "note": "XPP: data-referenced function after ret (pointer audit)"
+ },
+ {
+  "start": "0x002C1C1E",
+  "note": "XPP: data-referenced function (pointer audit)"
+ },
+ {
+  "start": "0x002C5BEA",
+  "note": "XPP: data-referenced function (pointer audit)"
  }
 ]
