@@ -432,6 +432,27 @@ void sub_0001FB90(void)
     if (cutscene_log()) fprintf(stderr, "[cutscene] SkipCutscene native: cutscene %08X skippable %u\n", cs, sk);
 }
 
+/* The chapter start sub_00115390 (cdecl: chapter, room or -1 for the chapter's own, start point name, flag),
+ * logged with HPPOA_CUTSCENE_LOG=1. New Game (StartGame, 0x21A60, return 0x21C6B) passes chapter 0, room 42 (the
+ * train). Dev: HPPOA_START_CHAPTER=<chapter>[:<room>] makes the first New Game start there instead (room -1 when
+ * not given). For tests only: no menu row. */
+extern void sub_00115390_gen(void);
+void sub_00115390(void)
+{
+    static int done;
+    const char *e = getenv("HPPOA_START_CHAPTER");
+    if (!done && e && *e && MEM32(esp) == 0x00021C6Bu) {
+        done = 1;
+        MEM32(esp + 4) = (uint32_t)atoi(e);
+        MEM32(esp + 8) = strchr(e, ':') ? (uint32_t)atoi(strchr(e, ':') + 1) : 0xFFFFFFFFu;
+        fprintf(stderr, "[dev] New Game starts at chapter %d room %d\n", (int)MEM32(esp + 4), (int)MEM32(esp + 8));
+    }
+    if (cutscene_log())
+        fprintf(stderr, "[chapter] start chapter %d room %d point %08X flag %u (from %08X)\n", (int)MEM32(esp + 4),
+                (int)MEM32(esp + 8), MEM32(esp + 12), MEM32(esp + 16), MEM32(esp));
+    sub_00115390_gen();
+}
+
 extern void sub_001A7450_gen(void);
 void sub_001A7450(void)
 {

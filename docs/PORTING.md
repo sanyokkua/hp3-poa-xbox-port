@@ -188,6 +188,25 @@ New Game, the Hogwarts Express cutscene, the corridor, the luggage car and the F
    `[cutscene] 8220EA14 skipped (skippable 0): ended` at the Start press, Harry in the corridor with the HUD 2 s later,
    play and the pause menu work after it. `HPPOA_CUTSCENE_LOG=1` logs the manager's state and the native.
 
+7. **Saves work and land in the player folder (no fix needed).** Saving is off in the train (pause menu: Save Game greyed);
+   it is on at Hogwarts. Dev helper `HPPOA_START_CHAPTER=<chapter>[:<room>]`: the chapter start `sub_00115390` (cdecl:
+   chapter, room or -1, start point, flag) gets that chapter from New Game (StartGame `0x21A60`, return `0x21C6B`; New
+   Game passes chapter 0 room 42, the train; chapter 1 is Night 0, `n0start_01.pkg`, the dormitory). `HPPOA_CUTSCENE_LOG=1`
+   logs each chapter start. Test (`build/t/sv2`, own HOME and game clone): chapter 1, Start skips the cutscene, pause >
+   Save Game > slot 1 > "Saving Harry Potter POA. Please don't turn off your Xbox console." > slot "The Marauder's Map";
+   `game/UDATA/4541004c/71370821DB7F/SaveGame-0` (16,384 bytes) and `SaveMeta.xbx`. Restart, title, Load Game (the menus
+   move with the left stick, not the scripted D-pad), slot 1: `SaveGame-0` read, chapter start `1 room 40` from the load
+   path (`0x21B7E`), Harry in the dormitory with the HUD, the save slot listed again. `mac/import_disc.py` keeps `UDATA`
+   and `TDATA` on a new import (as CoS).
+8. **Renderer (screenshots: `build/t/a1`, `c60`, `cs3`, `sv2`).** Movies, title, menus, the pause and save screens,
+   cutscenes, the train corridor and luggage car (lamp light, Harry's projected shadow on the floor and wall), the
+   dormitory and common room: no missing geometry, no white frames, transparency and subtitles right. NV2A lines: the
+   Metal path maps `LINES`/`LINE_STRIP`/`LINE_LOOP` to Metal lines (`nv2a_metal.m`, `prim_indices`), so none are dropped,
+   but they are one host pixel wide, a third of a console pixel at the default 3x scale (HP3-Recompiled draws each segment
+   as a quad one console pixel wide because PoA's shadow fade mask needs it). Not changed: `RECOMP_DRAW_LOG` over frames
+   2500-4800 of the train route (860,489 draws) and 1,100 frames of the dormitory (498,938 draws) has only triangle strips
+   (prim 6); no line draw was found to test a fix against.
+
 ## 1. Phase 2: the to-do (items 1 done above)
 
 1. Lift: `engine/tools/regen.sh` with this XBE (`LIFT_ONLY=1` to skip the disassembly). Seeds are empty; start from the facts in
@@ -244,6 +263,11 @@ Not applied to the other repos (rule: an engine fix found in one Xbox port goes 
    preceding function.
 2. **Kernel: `XC_FACTORY_AV_REGION` (0x103) answers NTSC-M `0x00400100`** (`kernel_xbox.c`). It was 0 in every port; any title that
    calls `XGetVideoStandard` saw "no standard" (PoA: PAL frame floor). Harmless for titles that never read it.
+3. **Check, not a fix yet: NV2A lines are one host pixel wide in the Metal path** (`nv2a_metal.m`, `prim_indices` maps them to
+   `MTLPrimitiveTypeLine`). Upscaled, a console line is 3-4 host pixels; a title that masks with lines (HP3-Recompiled: PoA's shadow
+   fade mask) gets gaps. Count line draws with `RECOMP_DRAW_LOG` in each port before widening them (PoA's tested scenes have none).
+4. **Method: game clock against wall time** (`HPPOA_CLOCK_LOG`, the frame timer hook in `recomp_manual.c`). Each port's 60 fps
+   option should be checked the same way (game ms / wall ms per window, ticks without a frame).
 
 ## 2. Tools
 
@@ -252,13 +276,20 @@ Dev scripts (inherited): `tools/stubcheck.py` (is any empty stub real code), `to
 `tools/relift.sh`, `tools/play_dev.sh` (play in a window, own HOME), `tools/sigmatch.py`, `tools/xdis.py`. Configure
 (as `tools/build_release.sh` does): `engine/tools/regen.sh`, then CMake with `-DNFSU2_GEN_DIR=engine/gen`, target `hppoa_recomp`.
 
-## 3. Not verified / open issues (after step 2)
+## 3. Not verified / open issues (after step 3)
 
-- **Play beyond the first corridor**: not tried (spells, fights, saves, level changes, the Dementor scene).
-- **Audio**: the APU runs (DSP posts acknowledged, DirectSound created); sound output was not listened to or measured.
-- **Speed**: game time against wall time not measured; the boot to the train takes about 75 s with scripted presses. 60 fps, 16:9 later.
-- **Renderer**: no white frames and no missing geometry seen in the shots (movie, title, menu, cutscene, train). Not checked: shadows,
-  fog, W-buffer bit of CONTROL0, post effects (the inherited thresholds are CoS's).
+- **Play beyond Night 0's dormitory**: spells, fights, the Dementor scene, later chapters not tried.
+- **Load spike of the game clock** (step 3, item 3): 80-150 s of game time in about a second while the train level loads, at 30
+  and 60 fps; no visible effect found. HP-POA-Xbox-Recomp's loading-loop pacing is the candidate fix if one shows.
+- **60 fps**: a cutscene with a fixed clock step was not met on the route (the split is untested); lip-sync follow and the Carpe
+  Retractum ledge step (HP-POA-Xbox-Recomp) not ported.
+- **Skip Cutscenes** forces the skip on cutscenes the title marks unskippable (the train's first); only that one was tested.
+  Its last subtitle line stays on screen for about a second after the skip.
+- **Load Game screen**: the slot names showed a moment after the screen (one shot had an empty list); not checked further.
+- **NV2A lines** one host pixel wide (step 3, item 8); no line draws in the tested scenes.
+- **Renderer** not checked: fog, W-buffer bit of CONTROL0, post-effect thresholds (CoS's).
+- **Host pad in scripted tests**: a controller connected to the Mac also drives the overlay during `tools/run_test.sh` runs (one run's
+  settings were changed that way); check `[overlay] open` in a test log.
 - **Rumble**: XInputSetState goes to the host pad; not tested with a real pad.
 - Run it: `tools/play_dev.sh` (own HOME in `build/play`). Scripted: `RECOMP_PAD_SCRIPT="10000:start:200,..." tools/run_test.sh <name> <secs> <shots>`
   then `tools/sheet.sh build/t/<name>`.
