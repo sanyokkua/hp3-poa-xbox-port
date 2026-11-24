@@ -1071,8 +1071,122 @@ static void diff_capture(const char *tag)
 extern void sub_00048DC0_gen(void);
 void sub_00048DC0(void)
 {
-    int now = diff_due();
+    static int fn = -1;
+    if (fn < 0) { const char *e = getenv("HPPOA_DIFF_FN"); fn = !e || strtoul(e, NULL, 16) == 0x48DC0u; }
+    int now = fn && diff_due();
     if (now) diff_capture("pre");
     sub_00048DC0_gen();
+    if (now) diff_capture("post");
+}
+
+/* Dev: HPPOA_WATCH_FMT=<hex dword>,<seconds>: at that time, find every dword of that value in main RAM (a texture
+ * header's Format, e.g. 06710B29 for a 128x64 P8 text texture), write-protect their pages and log the lifted
+ * function (dladdr of the host pc) that writes within 16 bytes of one (Options "(" glyph, PORTING 1d). Pages are
+ * protected again at each vblank. */
+#include <signal.h>
+#include <dlfcn.h>
+#include <sys/mman.h>
+#define WATCH_MAX 64
+static uint32_t s_wva[WATCH_MAX]; static int s_nw;
+static volatile int s_w_armed;
+static struct sigaction s_w_prev[2];
+static void w_protect(int prot)
+{
+    for (int i = 0; i < s_nw; i++)
+        mprotect((void *)((uintptr_t)XBOX_PTR(s_wva[i]) & ~(uintptr_t)0x3FFF), 0x4000, prot);
+}
+static void w_handler(int sig, siginfo_t *si, void *uc)
+{
+    uintptr_t a = (uintptr_t)si->si_addr;
+    int hit = -1, mine = 0;
+    for (int i = 0; i < s_nw; i++) {
+        uintptr_t h = (uintptr_t)XBOX_PTR(s_wva[i]);
+        if ((a & ~(uintptr_t)0x3FFF) == (h & ~(uintptr_t)0x3FFF)) mine = 1;
+        if (a + 16 >= h && a <= h + 16) hit = i;
+    }
+    if (mine) {
+        if (hit >= 0) {
+            Dl_info di; void *pc = NULL;
+#if defined(__aarch64__)
+            pc = (void *)((ucontext_t *)uc)->uc_mcontext->__ss.__pc;
+#endif
+            memset(&di, 0, sizeof di);
+            dladdr(pc, &di);
+            fprintf(stderr, "[watch] write %08X (header %08X %+d) by %s\n",
+                    (unsigned)(a - (uintptr_t)g_xbox_mem_offset), s_wva[hit],
+                    (int)(a - (uintptr_t)XBOX_PTR(s_wva[hit])), di.dli_sname ? di.dli_sname : "?");
+        }
+        w_protect(PROT_READ | PROT_WRITE);
+        s_w_armed = 0;
+        return;
+    }
+    {
+        struct sigaction *p = &s_w_prev[sig == SIGBUS];
+        if (p->sa_flags & SA_SIGINFO) p->sa_sigaction(sig, si, uc);
+        else if (p->sa_handler != SIG_DFL && p->sa_handler != SIG_IGN) p->sa_handler(sig);
+        else { signal(sig, SIG_DFL); raise(sig); }
+    }
+}
+void xbox_after_vblank_dpc(void)
+{
+    static int on = -1; static uint32_t fmt; static double at; static struct timespec t0;
+    struct timespec now;
+    if (on < 0) {
+        const char *e = getenv("HPPOA_WATCH_FMT");
+        on = e && strchr(e, ',');
+        if (on) { fmt = (uint32_t)strtoul(e, NULL, 16); at = atof(strchr(e, ',') + 1); clock_gettime(CLOCK_MONOTONIC, &t0); }
+    }
+    if (!on) return;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    if (on == 1 && (now.tv_sec - t0.tv_sec) + (now.tv_nsec - t0.tv_nsec) / 1e9 >= at) {
+        uint32_t lim = (uint32_t)xbox_GetMappedSize(), a;
+        struct sigaction sa;
+        if (getenv("HPPOA_WATCH_ADDR")) { s_wva[s_nw++] = (uint32_t)strtoul(getenv("HPPOA_WATCH_ADDR"), NULL, 16); lim = 0; }
+        for (a = 0x10000; a + 4 <= lim && s_nw < WATCH_MAX; a += 4)
+            if (MEM32(a) == fmt) {
+                s_wva[s_nw++] = a;
+                fprintf(stderr, "[watch] %08X at %08X: %08X %08X %08X %08X [%08X] %08X %08X %08X\n", fmt, a, MEM32(a - 16),
+                        MEM32(a - 12), MEM32(a - 8), MEM32(a - 4), MEM32(a), MEM32(a + 4), MEM32(a + 8), MEM32(a + 12));
+            }
+        memset(&sa, 0, sizeof sa);
+        sa.sa_sigaction = w_handler; sa.sa_flags = SA_SIGINFO;
+        sigaction(SIGBUS, &sa, &s_w_prev[1]);
+        sigaction(SIGSEGV, &sa, &s_w_prev[0]);
+        on = 2;
+    }
+    if (on == 2 && !s_w_armed && s_nw) { s_w_armed = 1; w_protect(PROT_READ); }
+}
+
+/* Dev: HPPOA_TEX_LOG=1 logs D3DXCreateTexture (0x279064, stdcall device, width, height, levels, usage, format,
+ * pool, out) with its caller (Apt text textures: Options "(" glyph, PORTING 1d). */
+extern void sub_00279064_gen(void);
+void sub_00279064(void)
+{
+    static int lg = -1;
+    if (lg < 0) { const char *e = getenv("HPPOA_TEX_LOG"); lg = e && *e == '1'; }
+    if (lg)
+        fprintf(stderr, "[d3dx] CreateTexture %u x %u levels %u usage %X format %X from %08X (caller %08X asked %u x %u)\n",
+                MEM32(esp + 8), MEM32(esp + 12), MEM32(esp + 16), MEM32(esp + 20), MEM32(esp + 24), MEM32(esp),
+                MEM32(g_ebp + 4), MEM32(g_ebp + 12), MEM32(g_ebp + 16));
+    if (lg && MEM32(g_ebp + 4) == 0x001AE5DBu) {   /* the text field record (caller's ebx): +0x1C width, +0x20 height */
+        uint32_t r = MEM32(g_ebp - 0x20), k;
+        fprintf(stderr, "[d3dx]   field");
+        for (k = 0; k < 0x58; k += 4) { uint32_t u = MEM32(r + k); float f; memcpy(&f, &u, 4); fprintf(stderr, " +%X=%g", k, f); }
+        fputc('\n', stderr);
+    }
+    sub_00279064_gen();
+}
+
+/* The Apt text field builder (sub_001ADFC0: sizes a field's text texture, calls D3DXCreateTexture through
+ * sub_0004F280); HPPOA_DIFF_FN=1ADFC0 with HPPOA_DIFF_DIR/HPPOA_DIFF_AT captures its calls for tools/difftest.py. */
+extern void sub_001ADFC0_gen(void);
+void sub_001ADFC0(void)
+{
+    static int fn = -1;
+    if (fn < 0) { const char *e = getenv("HPPOA_DIFF_FN"); fn = e && strtoul(e, NULL, 16) == 0x1ADFC0u; }
+    int now = fn && diff_due();
+    if (fn && getenv("HPPOA_TEX_LOG")) fprintf(stderr, "[d3dx] field builder call %u\n", s_diff_n);
+    if (now) diff_capture("pre");
+    sub_001ADFC0_gen();
     if (now) diff_capture("post");
 }

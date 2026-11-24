@@ -292,6 +292,21 @@ frame, for scripted runs), and `[dl]` prints stage 0's texture coordinates (`uv0
      `HPPOA_TM_LOG=1`, `HPPOA_DIFF_DIR`/`HPPOA_DIFF_AT` (difftest capture around `sub_00048DC0`; run
      `tools/difftest.py` with a venv that has unicorn, e.g. hpcos-xbox-port's).
 
+   - **Options "(" glyph: narrowed, not fixed.** The text textures are made by D3DX `D3DXCreateTexture` (`0x279064`,
+     from `sub_0004F280`; `HPPOA_TEX_LOG=1`), so `CreateTexture2` is used after all (through D3DX). The size is already
+     a power of two when asked: the Apt text field builder `sub_001ADFC0` (return `0x1AE5DB`) passes its record's
+     `+0x1C`/`+0x20` (floats through the CRT `_ftol` `0x13E9F8`); `sub_0004EDA0` (round up to a power of two, 16 bit) was
+     read in the lifted C: correct. The "Off" field: record `+4` x0 -6, `+C` x1 133 (139 px) gets `+1C` = 128; a field
+     with `+C` 169 (175 px) gets 256, one with 97 gets 128. So the width chosen in `sub_001ADFC0` is not the field's
+     width rounded up; whether that differs from the console is not known. Difftest of `sub_001ADFC0` (field builder
+     call 40 = the "Off" field, `HPPOA_DIFF_FN=1ADFC0 HPPOA_DIFF_AT=40`) stops after 1,596 instructions at a read of
+     address 0 in `sub_001AAA00` (`0x1AAA03`; the capture starts at 0x10000), so it is not conclusive. Next: map page 0
+     in `tools/difftest.py` (or capture `sub_001AAA00` itself) and compare `+0x1C`; the record is the caller's `ebx`.
+     Watch tool `HPPOA_WATCH_FMT=<dword>,<s>` (`HPPOA_WATCH_ADDR`): write-protects the pages holding a value and logs
+     the lifted function that writes next to it (dladdr of the host pc).
+   - **Malfoy's orange face (open, not started).** The xemu recording (`Screen Recording 2026-11-24 at 23.11.49.mov`)
+     shows the cutscene right after the luggage car; xemu's own faces are not ground truth (Ron's face garbled there).
+
 ## 1f. Play test 1: gameplay fixes (2026-11-24, `.wt/PLAYTEST1.md`)
 
 1. **#7 Dormitory trunk: Harry searches it forever.** Symptom (recording 20.21.09 at 5:15-6:00, and again after Load Game):
