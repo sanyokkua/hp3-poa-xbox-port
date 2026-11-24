@@ -33,6 +33,7 @@
 
 extern "C" volatile int xbox_input_blocked;     /* xinput_device.c: the game reads a neutral pad */
 extern "C" void apple_set_fullscreen(int on);   /* src/apple/apple_main.c */
+extern "C" volatile int nv2a_mtl_capture, nv2a_mtl_capture_frames;  /* nv2a_metal.m: the F12 draw capture */
 
 namespace
 {
@@ -116,7 +117,8 @@ namespace
 
     // Tests: NFSU2_OVERLAY_SCRIPT="<seconds>:<action>,..." (open, close, up, down, left,
     // right, accept, back, prev, next, shot) runs menu actions at those times;
-    // "shot" writes the next drawn frame to NFSU2_OVERLAY_SHOT<n>.bmp.
+    // "shot" writes the next drawn frame to NFSU2_OVERLAY_SHOT<n>.bmp; "capture" logs the next frame's
+    // draws as [dl] lines (the F12 capture).
     struct Step { Uint32 ms; std::string act; };
     std::vector<Step> g_script;
     size_t g_script_next;
@@ -812,7 +814,9 @@ extern "C" void overlay_main_tick(void)
         if (a == "open") Open(true);
         else if (a == "close") Open(false);
         else if (a == "shot") g_shot_req = 1;
-        else
+        else if (a == "capture") {
+            nv2a_mtl_capture = nv2a_mtl_capture_frames + 1;
+        } else
             for (int k = 0; k < 8; k++)
                 if (a == names[k])
                     PushAct(k);
