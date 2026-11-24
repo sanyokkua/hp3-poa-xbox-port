@@ -1,1 +1,318 @@
-[]
+[
+ {
+  "start": "0x000777F0",
+  "note": "HP-POA + HP3-Recompiled icall seed (character interaction handler, reached by function pointer)"
+ },
+ {
+  "start": "0x000CBEE0",
+  "note": "HP-POA + HP3-Recompiled icall seed"
+ },
+ {
+  "start": "0x000FCC70",
+  "note": "HP-POA icall seed (already a detected start)"
+ },
+ {
+  "start": "0x00243390",
+  "note": "HP3-Recompiled icall seed (real function after int3 padding, was inside 0x243370)"
+ },
+ {
+  "start": "0x00016B98",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_00016BF0"
+ },
+ {
+  "start": "0x00020030",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_00020034"
+ },
+ {
+  "start": "0x00028246",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_0002826A"
+ },
+ {
+  "start": "0x000402F0",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_00040304"
+ },
+ {
+  "start": "0x00041D00",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_00041D90"
+ },
+ {
+  "start": "0x0004FFFE",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_00050001"
+ },
+ {
+  "start": "0x0005FEF0",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_00060001"
+ },
+ {
+  "start": "0x00061100",
+  "note": "stubcheck round 1: code stub from sub_0024D43B"
+ },
+ {
+  "start": "0x000A6CC1",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_000A6C4A"
+ },
+ {
+  "start": "0x000BB9AF",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_000BB9F2"
+ },
+ {
+  "start": "0x00120000",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_00120012"
+ },
+ {
+  "start": "0x0013E95D",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_0013E98D"
+ },
+ {
+  "start": "0x001405AC",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_00140600"
+ },
+ {
+  "start": "0x0014288E",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_00142C34"
+ },
+ {
+  "start": "0x00142948",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_0014292E"
+ },
+ {
+  "start": "0x00142AA5",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_00142A7D"
+ },
+ {
+  "start": "0x001442A4",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_001448BC"
+ },
+ {
+  "start": "0x001442A7",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_001448BC"
+ },
+ {
+  "start": "0x0014473F",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_001448BC"
+ },
+ {
+  "start": "0x0014475A",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_001448BC"
+ },
+ {
+  "start": "0x0014735D",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_0014736C"
+ },
+ {
+  "start": "0x0014796D",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_00147A00"
+ },
+ {
+  "start": "0x0019509A",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_001950A6"
+ },
+ {
+  "start": "0x00195103",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_0019510F"
+ },
+ {
+  "start": "0x0019789C",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_00197876"
+ },
+ {
+  "start": "0x001978A0",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_00197876"
+ },
+ {
+  "start": "0x001ABB41",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_001ABB7E"
+ },
+ {
+  "start": "0x001B7512",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_001B74DA"
+ },
+ {
+  "start": "0x001B796A",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_001B7942"
+ },
+ {
+  "start": "0x001B7972",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_001B7942"
+ },
+ {
+  "start": "0x001C7863",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_001C783E"
+ },
+ {
+  "start": "0x002195C8",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_00219606"
+ },
+ {
+  "start": "0x0028FFCC",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_00290028"
+ },
+ {
+  "start": "0x0028FFDE",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_00290028"
+ },
+ {
+  "start": "0x0028FFEA",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_00290028"
+ },
+ {
+  "start": "0x0029B716",
+  "note": "stubcheck round 1: code stub from sub_00250C7B"
+ },
+ {
+  "start": "0x0029F13F",
+  "note": "stubcheck round 1: code stub from sub_00250C98"
+ },
+ {
+  "start": "0x0029F2C0",
+  "note": "stubcheck round 1: code stub from sub_00250CCC"
+ },
+ {
+  "start": "0x002A165A",
+  "note": "stubcheck round 1: code stub from sub_00250D3F"
+ },
+ {
+  "start": "0x002A1682",
+  "note": "stubcheck round 1: code stub from sub_00250D5E"
+ },
+ {
+  "start": "0x002A168D",
+  "note": "stubcheck round 1: code stub from sub_0025110A"
+ },
+ {
+  "start": "0x002A35E4",
+  "note": "stubcheck round 1: code stub from sub_00250D12"
+ },
+ {
+  "start": "0x002AFFF2",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_002B001C"
+ },
+ {
+  "start": "0x002B0CA1",
+  "note": "stubcheck round 1: code stub from sub_0025124B"
+ },
+ {
+  "start": "0x002B29B1",
+  "note": "stubcheck round 1: code stub from sub_00251319"
+ },
+ {
+  "start": "0x002BFFD3",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_002C0000"
+ },
+ {
+  "start": "0x002BFFF7",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_002C0000"
+ },
+ {
+  "start": "0x002C002A",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_002C002E"
+ },
+ {
+  "start": "0x002C00D8",
+  "note": "stubcheck round 1: BOUNDARY stub from sub_002C0107"
+ },
+ {
+  "start": "0x00040315",
+  "note": "stubcheck round 2: BOUNDARY stub from sub_00040250"
+ },
+ {
+  "start": "0x0005001B",
+  "note": "stubcheck round 2: BOUNDARY stub from sub_0004FD00"
+ },
+ {
+  "start": "0x00050065",
+  "note": "stubcheck round 2: BOUNDARY stub from sub_0004FD00"
+ },
+ {
+  "start": "0x0012005A",
+  "note": "stubcheck round 2: BOUNDARY stub from sub_0011FE70"
+ },
+ {
+  "start": "0x0012019C",
+  "note": "stubcheck round 2: BOUNDARY stub from sub_0011FE70"
+ },
+ {
+  "start": "0x00142AE2",
+  "note": "stubcheck round 2: BOUNDARY stub from sub_00142A91"
+ },
+ {
+  "start": "0x0014452D",
+  "note": "stubcheck round 2: BOUNDARY stub from sub_0014475A"
+ },
+ {
+  "start": "0x00144735",
+  "note": "stubcheck round 2: BOUNDARY stub from sub_0014475A"
+ },
+ {
+  "start": "0x00144827",
+  "note": "stubcheck round 2: BOUNDARY stub from sub_001442A7"
+ },
+ {
+  "start": "0x00144851",
+  "note": "stubcheck round 2: BOUNDARY stub from sub_001442A7"
+ },
+ {
+  "start": "0x00144859",
+  "note": "stubcheck round 2: BOUNDARY stub from sub_001442A7"
+ },
+ {
+  "start": "0x00144990",
+  "note": "stubcheck round 2: BOUNDARY stub from sub_001442A7"
+ },
+ {
+  "start": "0x00144AA4",
+  "note": "stubcheck round 2: BOUNDARY stub from sub_001442A7"
+ },
+ {
+  "start": "0x00144D1B",
+  "note": "stubcheck round 2: BOUNDARY stub from sub_001442A7"
+ },
+ {
+  "start": "0x00144D47",
+  "note": "stubcheck round 2: BOUNDARY stub from sub_001442A7"
+ },
+ {
+  "start": "0x00144DCB",
+  "note": "stubcheck round 2: BOUNDARY stub from sub_001442A7"
+ },
+ {
+  "start": "0x00147382",
+  "note": "stubcheck round 2: BOUNDARY stub from sub_00147229"
+ },
+ {
+  "start": "0x0014742B",
+  "note": "stubcheck round 2: BOUNDARY stub from sub_00147229"
+ },
+ {
+  "start": "0x001ABB72",
+  "note": "stubcheck round 2: BOUNDARY stub from sub_001ABA80"
+ },
+ {
+  "start": "0x001B751D",
+  "note": "stubcheck round 2: BOUNDARY stub from sub_001B7500"
+ },
+ {
+  "start": "0x002C0005",
+  "note": "stubcheck round 2: BOUNDARY stub from sub_002BFFD3"
+ },
+ {
+  "start": "0x002C0019",
+  "note": "stubcheck round 2: BOUNDARY stub from sub_002BFF50"
+ },
+ {
+  "start": "0x002C0070",
+  "note": "stubcheck round 2: BOUNDARY stub from sub_002BFFF7"
+ },
+ {
+  "start": "0x00142893",
+  "note": "stubcheck round 3: code stub from sub_00142B0B"
+ },
+ {
+  "start": "0x00142930",
+  "note": "stubcheck round 3: BOUNDARY stub from sub_00142B0B"
+ },
+ {
+  "start": "0x001473BB",
+  "note": "stubcheck round 3: BOUNDARY stub from sub_0014735D"
+ }
+]

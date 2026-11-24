@@ -34,8 +34,8 @@ fork of the Sorcerer's Stone one with SCDA-XBERecomp's D3D8 layer). Their code i
 | No XMV section: movies are `.mad` through EA's own player | HP3-Recompiled | `docs/bringup.md` ("Title facts") |
 | DirectSound crashes on the emulated APU in PoA, so the PCs replace it by a host mixer (our port emulates the APU: check) | HP3-Recompiled | `port/PORT_CHANGES.md`, `port/src/hle_dsound.c` |
 
-Nothing from these is in `engine/config/seed_functions.json` yet: it is `[]` until each seed is checked by `tools/seedcheck.py`
-on a lift of this disc.
+All four seeds are in `engine/config/seed_functions.json` (checked by `tools/seedcheck.py` on a lift of this disc, see
+`docs/PORTING.md` step 1a), together with 75 more from the stub audit.
 
 The NFSU2 `engine/` was itself made from [myUdav4iik/nfsu2-ios](https://github.com/myUdav4iik/nfsu2-ios) at `85d2cbf` (branch
 `ios`; nfsu2-sw v0.5.13 by antoxa2584x with the Apple host and the Metal renderer) with the patches in this folder, applied in

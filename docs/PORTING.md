@@ -7,7 +7,7 @@ Sorcerer's Stone port's tree ([hp1-xbox-port](https://github.com/sanyokkua/hp1-x
 shared with those games. Per the HP3-Recompiled notes, this game is **EA UK's engine** (the same family as the PS2 Chamber of
 Secrets), not Eurocom's (CoS) and not Warthog's (HP1).
 
-Status: **phase 1 done (the tree is renamed and cleaned); nothing has been lifted or run yet.**
+Status: **step 1 done (lifted, 0 stubs on real code, builds, boots to the first XDK blocker: the AC'97 reset spin in DSOUND); no frame is drawn yet.**
 
 ## Sources (pinned)
 
@@ -49,7 +49,50 @@ Both references are cloned (shallow) into the gitignored `upstream/` and never c
 TODO HP3 icon: `mac/make_icon.sh` and the installer still build the icon from the disc's title image as for CoS; check that
 this game's `$$XTIMAGE` / title image gives a good one, or draw one.
 
-## 1. Phase 2: the to-do (not started)
+## 1a. Step 1: seeds, lift, build, first boot (done)
+
+1. **Seeds.** `upstream/hp-poa/port/icall_seeds.json` (`0x777F0`, `0xCBEE0`, `0xFCC70`) and `upstream/hp3-recompiled/port/icall_seeds.json`
+   (`0x777F0`, `0xCBEE0`, `0x243390`) are 4 addresses together. Neither repo ships another function list: `region/*.json` hold only the
+   disc identity. `tools/seedcheck.py` on a first disassembly (21,555 functions): `0x777F0` and `0xCBEE0` free after padding, `0xFCC70`
+   already a detected start, `0x243390` a real function after `int3` padding that the detector had merged into `0x243370`'s span. All four
+   seeded.
+2. **Lift** (`engine/tools/regen.sh`, venv with `capstone<6`): disasm 21 s, whole script 105 s on this Mac. 21,558 functions with the
+   four seeds, 0 failed, 2.08 M lines of C in 87 files. `tools/stubcheck.py` had `TEXT` still at CoS's `.text` end (`0x130620`): now
+   `0x11000..0x2C77C0` (the code sections up to `.rdata`), and bytes past a section's raw data count as data (XGRPH `0x2B5A67`..`0x2B5A83`
+   are zero fill: `read` returns nothing).
+3. **Stub audit** (seed every `BOUNDARY` and `code` stub, relift, repeat):
+
+   | Round | Functions | Stubs | Real code | Seeds added |
+   |---|---|---|---|---|
+   | 0 (4 icall seeds) | 21,558 | 83 | 54 (38 boundary, 16 code; 5 of the code ones are zero fill) | 49 |
+   | 1 | 21,693 | 57 | 28 | 23 |
+   | 2 | 21,737 | 37 | 8 (3 + the 5 zero-fill) | 3 |
+   | 3 | 21,740 | 34 | 5 before the zero-fill fix, 0 after | 0 |
+
+   79 seeds in `engine/config/seed_functions.json`; all are function starts in the final disassembly. Notes name the stub's caller. Seeding
+   cuts a few CRT functions (the printf formatter `0x14427E`, the float converters at `0x142xxx`, the XPP ring code `0x2BFF50`) at shared exits,
+   as in CoS. `engine/tools/patch_gen.py` with its empty list: rc 0, nothing to do. 48 unresolved call targets remain stubbed in the first lift's count (the last lift: 48, 34 listed by `stubcheck`, none real code); 935 instructions are lifted as no-ops (38 mnemonics).
+4. **Build** (`cmake` as `tools/build_release.sh`, `build/deps` copied from hp1-xbox-port's, same SDL3 pin): configure and build in 19 s wall (158 s CPU),
+   165 objects, no error, no change to the engine needed. The binary is 23.7 MB.
+5. **First boot** (`tools/run_test.sh hppoa_boot 60 20,40`, own HOME): the game starts at `0x111DB`, XAPI init passes (partition1 `TDATA`/`UDATA`
+   `4541004c`, `TitleMeta.xbx`, the drive checks), the three worker threads start, `runtime.cfg`, `filesys.dat` and
+   `data/packages/plfs/frontend-startup.pkg` are read, the D3D device is created (NV2A `DMA_PUT` moves to `0x02320280`, `vblank -> ISR claimed`),
+   `fontsfonts.ini`, `data/misc/debugfont.xfn` and `texturessymbols.xsh` are opened (the first and last do not exist on the console either).
+   Then no more file or kernel calls: the game thread spins. 0 `[ICALL] Failed to resolve` lines, no crash, 0 draws, no frame.
+   `sample` of the process: game thread `sub_0001A5F0 -> ... -> sub_0014C570 -> sub_0014E100 -> sub_0014EC90` (EA's audio init) `-> sub_002B874A`
+   (`DirectSoundCreate`) `-> sub_002B86DD -> sub_002B85A4 -> sub_002B9940 -> sub_002BE0B3 -> sub_002BD8AC -> sub_002BE52C -> sub_002BE412`,
+   100 % of the samples in `sub_002BE412`: the AC'97 channel reset. It writes `2` to the bus-master control byte (table of NABM bases at
+   `0x2BF060`, byte at `base - 0x13FFEF5`) and waits for the bit to clear with `mov cl,[..]; and cl,2; test cl,cl; jne` where the load is **before** the
+   loop (`0x2BE448`), so it loops forever on plain memory. This is CoS hook 5 (`0x14CBAD`) at the new address: lock/unlock helpers `0x2B6710` /
+   `0x2B6732`, re-arm `0x2BE21C`. Also in the log: `[UNIMPL]` `out dx,al` `0x26EE90`, `wbinvd` `0x26BC74`, `in al,dx` `0x26DF7D` (all D3D).
+   The HP3-Recompiled notes had the same stop (their emulated APU died in `DirectSoundCreate`, see `docs/hp-poa-hooks.md`).
+   `tools/smoke.sh` fails for the same reason (no frame dump).
+
+Next (not done): the XDK glue of the CoS list for these addresses. Known now: `D3D_BlockOnTime 0x0026C540`, device pointer `0x00275FE8`,
+fence `+0x2C`/`+0x30`, vblank ISR `0x00269C90`, XInput `0x002BFC0C..0x002C0C19`, DSOUND code `0x2B66E0` + 37,428 (already in `region_profile.h`),
+AC'97 reset `0x2BE412`. All hooks of the references with their meaning for us: `docs/hp-poa-hooks.md`.
+
+## 1. Phase 2: the to-do (items 1 done above)
 
 1. Lift: `engine/tools/regen.sh` with this XBE (`LIFT_ONLY=1` to skip the disassembly). Seeds are empty; start from the facts in
    `docs/upstream-patches/README.md` (3 seeds both references agree on: `0x000777F0`, `0x000CBEE0`, plus `0x00243390` from
