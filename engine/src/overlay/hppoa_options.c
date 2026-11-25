@@ -166,8 +166,9 @@ static const OverlayOption k_options[] = {
     { "Tweaks", "Skip Logo Movies", "Start without the EA and Warner Bros. logo movies.",
       "The logo movies before the title screen: from the next start.",
       CHOICES(k_onoff), 0, 1, "skip_logos", k_01, apply_skip_logos },
-    { "Tweaks", "Skip Cutscenes", "Press Start or Back in a cutscene to end it, as the game's own skip "
-      "does. Cutscenes the game does not let you skip always play.", "Skippable cutscenes: at once.",
+    { "Tweaks", "Skip Cutscenes", "Press Start or Back in a cutscene to skip it. Ones the game lets you skip end "
+      "at once; the others play to their end about six times as fast, silent, so the story goes on as it would.",
+      "Every cutscene: at once or fast-forwarded.",
       CHOICES(k_onoff), 1, 0, "skip_cutscenes", k_01, apply_skip_cutscenes },
 
     { "Advanced", "Performance Overlay", "Frames per second and the slowest frame, top left "

@@ -120,3 +120,23 @@ crashes on the emulated APU").
 - Files the console misses too (path joined without separator): `fontsfonts.ini`, `texturessymbols.xsh`,
   `variablesthingvars.txt`: not our fault.
 - The unresolved call targets from their lift (47) are 40 from gap-prologue guesses and 7 from D3DX, XGRPH, XPP.
+
+## 6. Cutscenes (ours, play test 3; neither reference skips PoA's cutscenes)
+
+HP3-Recompiled's `hle_skip.c` has a fast-forward (QPC `sub_00195129` scaled 16x, mixer silent) whose `cutscene()` is
+always false for PoA ("not found yet"). HP-POA has none. Ours (`engine/src/recomp_manual.c`, "Cutscenes"):
+
+| Address | What |
+|---|---|
+| `0x365EA8` | cutscene manager singleton (`sub_000616A0`): `+0x8C` the cutscene playing (two objects used in turn), `+0x99` skippable |
+| `sub_00061F10` | PlayScene's set-up: script functions `done` -> cutscene `+0x1C`, `skip` -> `+0x20` (looked up by name, `sub_0006A300` on the level's script module) |
+| `sub_00062100` | per-frame update: cutscene time `+4` advanced, orchestrator `[0x3BA438]` stepped (`sub_001A53B0`); past its length -> `sub_00062090` |
+| `sub_00062090` | EndScene (`Orchestrator::Runtime::EndScene(%s)`): calls `done` (`+0x1C`, then cleared) through the script VM (`sub_001B8C70` -> `0x3BA73C`, `sub_001B88D0(handle, out)`), starts the next queued scene (`sub_000614C0`) |
+| `sub_00062170` | skip: subtitles off (`sub_001AF3D0(0,0)`), orchestrator skip mode (`+0x34`, `sub_001A50D0(1)` on every track), EndScene, then `skip` (`+0x20`) |
+| `sub_00061520` | `(this, force)`: skip if skippable or forced, posts `PostSkipScene`; called by the Apt native SkipCutscene `sub_0001FB90` |
+| `sub_00020220` | Apt native SetTraceControlMode(name): `widescreen` while a level's scripted scene with the bars runs (no orchestrator cutscene) |
+| `sub_001A7450` clock `0x38BA6C` `+0x14` | fixed step a tick, not clamped (real-time steps are clamped to 100 ms): the fast-forward's lever |
+
+Level script functions (`data/misc/intro_hogwartsexpress.hpb`): `Cutscene_EnterTheDementor` plays `InHogEx_07` with
+`done = Cutscene_EnterTheDementor_Over_1`, `skip = Cutscene_EnterTheDementor_Skip` (only `MUS_HE_DEM1`), then queues
+`InHogExCam_01`; `_Over_1` sets up the dementor (`Setup_Dementor`, `Dem_ResetForLevelRestart`), `_Over_2` starts the chase.

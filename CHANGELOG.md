@@ -4,8 +4,12 @@
 
 Version 0.0.1: the port is started; nothing runs yet.
 
-- Fixed: the game stuck in the dementor scene on the train after Start or Back. Skip Cutscenes ended cutscenes the
-  game marks unskippable, and those drive the level script; it now skips only skippable ones.
+- Skip Cutscenes skips every cutscene again, and the story goes on after it (play test 3): Start or Back ends the ones
+  the game lets you skip, and fast-forwards the others (and the levels' scripted scenes with the black bars) to their
+  own end, about six times as fast and silent, so the level script sees them finish as on the console. Ending them
+  instead (the first version) skipped their last events and once stuck the train's dementor scene; the version after
+  it left almost every cutscene unskippable. `HPPOA_CUTSCENE_FF=0` turns the fast-forward off, `HPPOA_FF_STEP` sets
+  its step (100 ms a frame). Dev aids: `HPPOA_CALL_SCRIPT` (run a level script function by name), `HPPOA_FF_AUTO`.
 - Fixed: characters' skin, hair and robes blinking orange in cutscenes (Malfoy, Ron on the train). The cutscene models'
   second layer is their own texture, which squared the colour; that layer now passes the colour on
   (`RECOMP_SKIN_LAYER=1` keeps it).

@@ -182,13 +182,8 @@ New Game, the Hogwarts Express cutscene, the corridor, the luggage car and the F
 6. **Skip Cutscenes** (`HPPOA_SKIP_CUTSCENES`, on unless 0, overlay Tweaks). The cutscene manager is the singleton
    `0x365EA8` (`sub_000616A0`): `+0x8C` the cutscene playing, `+0x99` skippable. The Apt native SkipCutscene (`0x1FB90`,
    called when A is pressed in a cutscene) runs `sub_00061520(this, force)`, which ends a skippable or forced one with
-   `sub_00062170` and sets the menu's `CutsceneSkipped`. The train's first cutscene is not skippable (A: native called,
-   nothing happens). Start or Back while a skippable cutscene plays (`+0x8C` set, `+0x99` != 0) asks for the skip,
-   run on the game thread at the next clock tick; the press is hidden from the game while it plays (Start would pause).
-   Unskippable ones are never ended: the first version forced them, and play test 3 stuck in the dementor scene after
-   `[cutscene] 8220EBF4 skipped (skippable 0): ended` (inhogex_07; the next scene looped forever). Evidence of the fix
-   (`build/t/cskip`): Start and Back in the train's first cutscene reach the game's native, which refuses; the cutscene
-   plays to the end and Harry walks the corridor after it. `HPPOA_CUTSCENE_LOG=1` logs the manager's state and the native.
+   `sub_00062170` and sets the menu's `CutsceneSkipped`. Almost no cutscene is skippable (`+0x99` stays 0). Start or
+   Back ends a skippable one that way and fast-forwards the others: see 1h (play test 3) for why and how.
 
 7. **Saves work and land in the player folder (no fix needed).** Saving is off in the train (pause menu: Save Game greyed);
    it is on at Hogwarts. Dev helper `HPPOA_START_CHAPTER=<chapter>[:<room>]`: the chapter start `sub_00115390` (cdecl:
@@ -497,6 +492,63 @@ frame, for scripted runs), and `[dl]` prints stage 0's texture coordinates (`uv0
    - Not changed: the renderer (compiles, GPU load) is outside this branch, and the remaining single-frame hitches are
      the game's own synchronous loads. Before/after numbers: none (no change made).
 
+## 1h. Play test 3: Skip Cutscenes skips every cutscene (fast-forward)
+
+Owner's report (`.wt/PLAYTEST3.md` issue 1): after `d3b878c` Start/Back did nothing in almost every cutscene (only
+`+0x99` skippable ones were ended); before it, forcing every cutscene ended `inhogex_07` (the dementor) and
+`inhogexcam_01` then looped forever.
+
+1. **How a cutscene ends (disassembly, `tools/xdis.py`; script constants from `data/misc/intro_hogwartsexpress.hpb`).**
+   The level script plays a cutscene with PlayScene(orc, done, skip): `sub_00061F10` looks both script functions up by
+   name on the level's script module and keeps their handles at `+0x1C` / `+0x20` of the cutscene object. Each frame
+   `sub_00062100` advances the cutscene's time and steps the orchestrator (`sub_001A53B0`), which fires the timeline's
+   events in order; past its length it calls EndScene `sub_00062090`, which runs `done` through the script VM
+   (`sub_001B8C70` -> `sub_001B88D0`) and starts the next queued scene. A skip, `sub_00062170`, clears the subtitle,
+   puts the orchestrator in skip mode (`+0x34 = 1`, `sub_001A50D0(1)` on every track), runs EndScene (so `done`), then
+   runs `skip`, and posts `PostSkipScene`. So a forced end drops every timeline event after the press and runs a `skip`
+   function the title never runs for an unskippable scene. The dementor's `Cutscene_EnterTheDementor` plays `InHogEx_07`
+   with `done = _Over_1` (sets up the dementor) and `skip = _Skip` (only starts the music `MUS_HE_DEM1`), then queues
+   `InHogExCam_01`. Not proven: which lost event or call made `inhogexcam_01` loop for the owner. A staged forced end
+   (below, `forceA`, `forceC`) went on to the chase; the loop needs something of the owner's run that the staging lacks.
+2. **Fix: fast-forward, not end** (`engine/src/recomp_manual.c`, "Cutscenes"). Start or Back in a cutscene that is not
+   skippable sets the game clock's fixed step (`0x38BA6C +0x14`, not clamped, unlike real-time steps) to
+   `HPPOA_FF_STEP` ms a tick (100: the step the timer itself takes after a hitch) and flips every frame on the next
+   vblank (the PGRAPH handler's trap rewrite, as 60 fps), with the sound muted (`xa2_set_mute`), until `+0x8C` changes;
+   then the title's own fixed step goes back. The getter `sub_001E7640` answers the script's own value meanwhile, so a
+   script that saves and restores the step keeps its value. About 6x at 30 and 60 fps. The scene plays out: every
+   event fires and `done` runs, as on the console. Skippable ones still end the game's way. The level scripts' scenes
+   with the bars that are not orchestrator cutscenes (`+0x8C` 0, Apt screen `widescreen` from SetTraceControlMode
+   `sub_00020220`, e.g. the Marauder's Map challenge's opening) are fast-forwarded the same way until the screen
+   changes. HP3-Recompiled's idea (scaled QPC, `hle_skip.c`), applied through the clock's own fixed step instead.
+   `HPPOA_CUTSCENE_FF=0` off (unskippable ones play, as `d3b878c`), `=force` the old forced end (A/B only).
+   Speech: the timeline does not wait on it (game ms against wall ms in the logs is the full 6x).
+3. **Dev aids.** `HPPOA_CALL_SCRIPT="<s>:<function>,..."` runs a level script function by name `<s>` seconds after the
+   first clock tick (the module and lookup PlayScene uses). The train's dementor scene without the luggage-car puzzle
+   and the fights: `112:Cutscene_MBOM_Defeated,125:CutScene_DinerCarDoTauntRon,140:Cutscene_DinerCarMalfoyAttacks,
+   155:Cutscene_DinerCarDuelWon,170:Cutscene_EnterTheDementor` (New Game, walk up the corridor 92-104 s): the dark
+   dining car, Ron frozen, then inhogex_07 -> inhogexcam_01 -> the chase, as in the owner's recording.
+   `HPPOA_FF_AUTO=<n>` fast-forwards the next n unskippable cutscenes without a press. `HPPOA_CUTSCENE_LOG=1` also
+   logs the Apt screen and, on a forced end, the `done`/`skip` handles.
+4. **Evidence** (30 fps unless named; shots `build/t/<run>/shotN.png`, sheets `sheet.png`):
+   - (a) train opening, Start (`ff_train`): `[cutscene] 8220CFBC fast-forward (not skippable), 100 ms a tick`,
+     `fast-forward done: 11400 game ms in 3812 wall ms` (before the vblank flips: 3x); shot2 its last line "I think
+     Scabbers went that way...", shot3/4 Harry in the corridor with the HUD, shot5 the luggage-car cutscene next. At
+     60 fps with Back (`train60`): `fast-forward done: 19400 game ms in 3235 wall ms`, then `[CLOCK] ... x1.000`.
+   - (b) dementor, pad Start in each scene (`ffpad`): `8220B384 fast-forward` (inhogex_07, shot1 "Harry? Harry!"),
+     `fast-forward done: 13800 game ms in 2302 wall ms (next 8220B2DC)`, `8220B2DC fast-forward` (inhogexcam_01, shot2),
+     `done: 5800 game ms in 977 wall ms (next 00000000)`; shots 3-15 the chase in the dark car with the HUD, the
+     dementor, the kiss, then the game's own restart (inhogexcam_01 again, natural, at game ms 537260). Without presses
+     (`nat`): the same chain at 1x. Forced end (`forceA`, `forceC`, `HPPOA_CUTSCENE_FF=force`): `8220EABC script
+     functions: done 810B43EC skip 810B4908`, `skipped (skippable 0): ended`, then inhogexcam_01 (`done 810B472C skip
+     00000000`) and the chase.
+   - (c) Hogwarts, the owner's `SaveGame-2` (Load Game, slot 3): the Marauder's Map challenge's opening (scripted, Back,
+     `hw2`): `00000001 fast-forward (scripted scene, screen widescreen)`, `done: 6600 game ms in 1102 wall ms (next
+     00000000, screen pre_ig)`, shot3+ Harry and Ron with the HUD. Its next cutscene N0Maraud_04 (called with
+     `HPPOA_CALL_SCRIPT=97:N0MARAUD_04_CutScene`, Start, `hw3`): `8220EA14 fast-forward (not skippable)`, `done: 10300
+     game ms in 1721 wall ms`; shots 6-11 the pixie fight with the HUD. `SaveGame-1` loads (`hw1`, sixth floor); no
+     cutscene was reached from it by script.
+   - Not verified: the exact play-test-3 loop; a skippable (`+0x99`) cutscene; the owner's own pad and timing.
+
 ## 1e. Performance: shader compile stalls (play test 1, issue 3)
 
 The owner's play test (60 fps) showed drops to 51 fps with single frames of 170-600 ms, each logged as
@@ -638,8 +690,9 @@ Dev scripts (inherited): `tools/stubcheck.py` (is any empty stub real code), `to
   and 60 fps; no visible effect found. HP-POA-Xbox-Recomp's loading-loop pacing is the candidate fix if one shows.
 - **60 fps**: a cutscene with a fixed clock step was not met on the route (the split is untested); lip-sync follow and the Carpe
   Retractum ledge step (HP-POA-Xbox-Recomp) not ported.
-- **Skip Cutscenes** ends only cutscenes the title marks skippable (forcing unskippable ones broke the dementor scene). Its
-  last subtitle line stays on screen for about a second after the skip.
+- **Skip Cutscenes** (1h): the forced end's exact loop in play test 3 (inhogexcam_01 replaying) was not reproduced in a
+  staged run; the fast-forward does not use that path. A skippable cutscene (`+0x99` set) was not met in the runs, so
+  the game's own skip path is unchanged but untested this round.
 - **Load Game screen**: the slot names showed a moment after the screen (one shot had an empty list); not checked further.
 - **NV2A lines** one host pixel wide (step 3, item 8); PoA's one line (the shadow fade mask) lands whole (1d item 1).
 - **Play test 1 open items** (1d): Malfoy's orange/blinking face (not reproduced; the dining car not reached by script). The Options "(" glyphs are fixed by a
