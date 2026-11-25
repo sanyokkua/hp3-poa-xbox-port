@@ -505,6 +505,49 @@ static void move_log(uint32_t clk, uint32_t before)
     }
 }
 
+/* Dev: HPPOA_POKE8="<hex va>=<value>,...": bytes written every game tick (the title's tuning switches, e.g. NoClip
+ * 0x36A93C, DebugMove 0x36AC30; HP-POA-Xbox-Recomp's trainer_vars.h, MIT, facts only). For scripted routes. */
+static void dev_poke(void)
+{
+    static int n = -1; static uint32_t va[16]; static uint8_t val[16];
+    if (n < 0) {
+        const char *e = getenv("HPPOA_POKE8");
+        n = 0;
+        while (e && *e && n < 16) {
+            char *q;
+            va[n] = (uint32_t)strtoul(e, &q, 16);
+            if (*q != '=') break;
+            val[n++] = (uint8_t)strtoul(q + 1, &q, 0);
+            e = *q == ',' ? q + 1 : q;
+        }
+    }
+    for (int i = 0; i < n; i++) MEM8(va[i]) = val[i];
+    /* HPPOA_SETPOS="<game ms>,x,y,z": once the game clock passes that time, the player is put at x y z (player
+     * +0x4EC, as HPPOA_MOVE_LOG prints it): a scripted route's start that does not depend on the camera */
+    {
+        static int st = -1; static uint32_t at; static float p[3];
+        if (st < 0) {
+            const char *e = getenv("HPPOA_SETPOS");
+            st = e && sscanf(e, "%u,%f,%f,%f", &at, &p[0], &p[1], &p[2]) == 4 ? 1 : 0;
+        }
+        if (st == 1 && MEM32(GAME_CLOCK + 4) >= at) {
+            uint32_t o = player_obj();
+            if (o) {
+                float cx; memcpy(&cx, (void *)XBOX_PTR(o + 0x4ECu), 4);
+                for (uint32_t i = 0; i < 0x2000u; i += 4) {   /* other copies of the position */
+                    float f; memcpy(&f, (void *)XBOX_PTR(o + i), 4);
+                    if (f == cx) {   /* each copy is x y z (the body's, the controller's): all written */
+                        for (int k = 0; k < 3; k++) memcpy((void *)XBOX_PTR(o + i + 4u * k), &p[k], 4);
+                        fprintf(stderr, "[dev] position copy at player +%X\n", i);
+                    }
+                }
+                fprintf(stderr, "[dev] player %08X put at %.1f %.1f %.1f\n", o, p[0], p[1], p[2]);
+                st = 2;
+            }
+        }
+    }
+}
+
 extern void sub_001A7450_gen(void);
 void sub_001A7450(void)
 {
@@ -517,6 +560,7 @@ void sub_001A7450(void)
     if (clk != GAME_CLOCK) { sub_001A7450_gen(); return; }
     clock_before_tick(clk);
     cutscene_watch();
+    dev_poke();
     before = MEM32(clk + 4);
     sub_001A7450_gen();
     move_log(clk, before);

@@ -324,8 +324,20 @@ frame, for scripted runs), and `[dl]` prints stage 0's texture coordinates (`uv0
      `options_title_and_pause_fixed.png`); the other 37-45 fields of each route keep their size (`[d3dx] text field` lines:
      only `W 115 mode 3: texture 128 -> 256`); main menu, Load Game and Bonus Activities shots differ only in the animated
      selection sparkle (`menus_fit_off_vs_on.png`, `pause_fit_off_vs_on.png`).
-   - **Malfoy's orange face (open, not started).** The xemu recording (`Screen Recording 2026-11-24 at 23.11.49.mov`)
-     shows the cutscene right after the luggage car; xemu's own faces are not ground truth (Ron's face garbled there).
+   - **Malfoy's orange face (open, round 3: cutscene not reached).** Route work (30 fps, `tools/run_test.sh`):
+     the monster book is beaten by script (`build/t/book_script2.txt`: the train route, then from 138 s cycles of a
+     stick push, `rt` held 600 ms, `rt+x`; the book's defeat cutscene `8220CF14`/`8220D064` at about 167 s, `build/t/B2`,
+     `L1`); walking on (`lsu`) reaches the luggage car's end wall at x 2616 z -308 (`build/t/L1`), short of the trunks
+     and door of the box puzzle (xemu: pick up a box, drop it, Open the door). New dev aids: `HPPOA_POKE8=<va>=<v>,...`
+     (bytes written every tick; NoClip `0x36A93C` alone does not let Harry through walls) and
+     `HPPOA_SETPOS=<game ms>,x,y,z` (puts the player there, writing every copy of the position in the object:
+     `+4EC`, `+B7C`, `+B8C`, `+E28`, `+174C`, `+1F98`). A jump past the end wall (x 3200 z -150) lands outside the train
+     on the track (`build/t/D1`): the dining car is not laid out after the luggage car, so its position is still
+     unknown. Draw check on the reachable cutscene (luggage car, Ron and the book, `build/t/F1`, 3 frames `capture`):
+     no draw has stage 1 = stage 0's texture except the bloom chain's 4-stage downsample; the characters' stage 1 is a
+     separate texture (`comb 00000002`). Next: the box puzzle by script (or the dining car's coordinates, e.g. from
+     `[move]` on a real play), then `capture` on the "Smiling on the other side of your face" shot.
+
 
 ## 1f. Play test 1: gameplay fixes (2026-11-24, `.wt/PLAYTEST1.md`)
 
@@ -386,6 +398,14 @@ frame, for scripted runs), and `[dl]` prints stage 0's texture coordinates (`uv0
    `[UNIMPL]` seen: the known D3D `in`/`out`/`wbinvd`, and `pushfd`/`popfd` at `0x159676`/`0x159680` (6 each), inside a
    `pushal ... popal` around a call whose flags nothing reads after: harmless. The common room's own steps (after the
    Folio) were not reached by script.
+
+5. **Trunk recheck (round 3, current main + the Options hook).** `build/t/trunk_script.txt` (`HPPOA_START_CHAPTER=1`)
+   reached the trunk in 1 of 3 runs (`build/t/T1`: Harry takes the collector's card out at 111 s, 0 `[ICALL]`;
+   `T2`, `T4`: the camera-relative walk ended at a bed). The walk depends on when the level finishes loading (game ms
+   at the first push 200,927 vs 203,624) and the camera swing. A fresh script with `HPPOA_SETPOS=206000,1881.5,451,-1650`
+   (next to the trunk, `build/t/trunk_script3.txt`) puts Harry there every time (`T8`-`T10`) and the "Open" prompt
+   shows, but plain `a` presses (100 ms) did not open it in `T3`/`T10`, while `T1`'s `lsl+a` (stick held into the
+   trunk) did. Open: why the prompt does not take a bare A (facing?), not checked on the owner's pad.
 
 ## 1e. Performance: shader compile stalls (play test 1, issue 3)
 
@@ -520,7 +540,7 @@ Dev scripts (inherited): `tools/stubcheck.py` (is any empty stub real code), `to
   Its last subtitle line stays on screen for about a second after the skip.
 - **Load Game screen**: the slot names showed a moment after the screen (one shot had an empty list); not checked further.
 - **NV2A lines** one host pixel wide (step 3, item 8); PoA's one line (the shadow fade mask) lands whole (1d item 1).
-- **Play test 1 open items** (1d): Malfoy's orange/blinking face (not reproduced). The Options "(" glyphs are fixed by a
+- **Play test 1 open items** (1d): Malfoy's orange/blinking face (not reproduced; the dining car not reached by script). The Options "(" glyphs are fixed by a
   hook (1d item 4); whether the console shows them too is not checked.
 - **Renderer** not checked: fog, W-buffer bit of CONTROL0, post-effect thresholds (CoS's).
 - **Host pad in scripted tests**: a controller connected to the Mac also drives the overlay during `tools/run_test.sh` runs (one run's
