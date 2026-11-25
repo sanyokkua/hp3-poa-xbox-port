@@ -645,11 +645,14 @@ the rug's near end) and 32-35 (the gargoyle door at the start of the Marauder's 
      camera in `AB_hi`): static A/B in one run with `0ab` while a rug vertex sat in the near slab (w 2.7 and 8.5,
      `build/t/LE_z1`, `AB_1200`): pixel and vertex shots identical except Harry's idle animation
      (`build/t/evidence/pt3_rug_static_ab_pixel_vs_vertex.png`, `_diff.png`, `_2.png`, `_2_diff.png`). No regression.
-   - **The owner's cut was not reproduced in my own shots**, with either clamp: about 900 shots over walks and camera
-     turns on the rug at 30 fps (and the owner's settings at 60 fps) showed none, and the frames where a rug vertex was in
-     the near slab drew identically in both modes (the bent triangle was off screen in those camera positions). The
-     owner's camera (high over the near end, after the Peeves cutscene, Ron pushing it) was not reached by script. So the
-     cause is shown by the numbers and xemu, not by a before/after pair of the cut.
+   - **Reproduced and fixed in one frame.** The owner's recording (696-700 s) shows the rug's corner flickering frame
+     to frame with an almost still camera: a rug vertex in the near slab flips with the camera's sway. A debug build
+     (`.wt/hppoa-render/build/t/evidence/pt3_zsplit_debug.patch`, not committed) drew the left half of each frame with
+     the old per-vertex clamp's depth and the right half with the per-pixel clamp, and took a shot whenever a rug
+     triangle with a vertex in the slab was on screen (SaveGame-1, library walk, 4x). In
+     `pt3_rug_cut_split_f3032.png` and `_f3038.png` the left half cuts the rug off along a straight edge (bare floor and
+     Harry's shadow), the right half draws it whole; `pt3_rug_split_control_f3156.png` shows no seam at the split.
+     `[zv] f3038 #102 verts 61 attrs 0605: 6 visible bent tris, slab w min 1.28`. The DADA plank patch was not reached.
    - The plank patch at the gargoyle door (images 32-35) was not reached: SaveGame-2 starts in the challenge hall, and
      the scripted walk fell into the collapsing floor. Same mechanism expected (a large floor quad near the camera,
      playing as Ron with a low camera).
@@ -810,7 +813,7 @@ Dev scripts (inherited): `tools/stubcheck.py` (is any empty stub real code), `to
 - **Play test 1 open items** (1d): Malfoy's orange/blinking face (not reproduced; the dining car not reached by script). The Options "(" glyphs are fixed by a
   hook (1d item 4); whether the console shows them too is not checked.
 - **Renderer** not checked: fog, W-buffer bit of CONTROL0, post-effect thresholds (CoS's).
-- **Play test 3** (1j): the rug/plank cut not reproduced in a scripted run (fix from the cause, A/B shows no change).
+- **Play test 3** (1j): the rug cut is shown fixed in a same-frame split; the DADA plank patch is not reached (same cause expected).
 - **Play test 3** (1h): character shadow strength vs the console; AO units (near 10 / far 10010) left for the owner; specular lighting missing.
 - **Host pad in scripted tests**: a controller connected to the Mac also drives the overlay during `tools/run_test.sh` runs (one run's
   settings were changed that way); check `[overlay] open` in a test log.
