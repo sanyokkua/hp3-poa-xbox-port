@@ -2791,7 +2791,13 @@ static MTLStencilOperation stencil_op(uint32_t v)
     case 0x150A: return MTLStencilOperationInvert;
     case 0x8507: return MTLStencilOperationIncrementWrap;
     case 0x8508: return MTLStencilOperationDecrementWrap;
-    default: return MTLStencilOperationKeep;    /* KEEP, and 0 (never set) */
+    case 0: {   /* NV097_SET_STENCIL_OP_V_ZERO (xemu pgraph.c, nv2a_regs.h); D3D writes KEEP (0x1E00) by
+                 * default, so 0 is a real ZERO. RECOMP_MTL_STENCIL_ZERO=0: KEEP as before (hppoa audit 5). */
+        static int z = -1;
+        if (z < 0) { const char *e = getenv("RECOMP_MTL_STENCIL_ZERO"); z = !(e && *e == '0'); }
+        return z ? MTLStencilOperationZero : MTLStencilOperationKeep;
+    }
+    default: return MTLStencilOperationKeep;    /* KEEP (0x1E00) */
     }
 }
 
@@ -3692,6 +3698,11 @@ static void mtl_draw_raw_inner(const Nv2aRawBatch *b)
             if (b->vp_consts) fprintf(stderr, " | c58 %g %g c59 %g %g", b->vp_consts[58][0], b->vp_consts[58][1],
                                       b->vp_consts[59][0], b->vp_consts[59][1]);
             fprintf(stderr, " | z %u %u %X", r[0x30C / 4], r[0x35C / 4], r[0x354 / 4]);
+            {   float cmin, cmax; memcpy(&cmin, &r[0x394 / 4], 4); memcpy(&cmax, &r[0x398 / 4], 4);
+                fprintf(stderr, " | zmm %X clip %g %g", r[0x1D78 / 4], cmin, cmax); }   /* ZMIN_MAX_CONTROL, clip range */
+            if (r[0x32C / 4])   /* stencil test: func ref mask, ops fail zfail pass */
+                fprintf(stderr, " | st %X %X %X op %X %X %X", r[0x364 / 4], r[0x368 / 4], r[0x36C / 4],
+                        r[0x370 / 4], r[0x374 / 4], r[0x378 / 4]);
             if (getenv("RECOMP_DL_TEXGEN") && b->xform == 1) {   /* hppoa: generated coordinates of vertices 0..2 */
                 uint32_t vi, st, c, j;
                 const float *mv = (const float *)&r[0x480 / 4];
@@ -3700,6 +3711,11 @@ static void mtl_draw_raw_inner(const Nv2aRawBatch *b)
                     attr_to_float4(b, 0, vi, p4);
                     for (c = 0; c < 4; c++) e4[c] = mv[c * 4] * p4[0] + mv[c * 4 + 1] * p4[1] + mv[c * 4 + 2] * p4[2] + mv[c * 4 + 3] * p4[3];
                     fprintf(stderr, " | p%u %.4g,%.4g,%.4g eye %.4g,%.4g,%.4g", vi, p4[0], p4[1], p4[2], e4[0], e4[1], e4[2]);
+                    {   /* the composite's screen position (pixels before the viewport offset c59) */
+                        float sc[4];
+                        for (c = 0; c < 4; c++) sc[c] = b->composite[c * 4] * p4[0] + b->composite[c * 4 + 1] * p4[1] + b->composite[c * 4 + 2] * p4[2] + b->composite[c * 4 + 3] * p4[3];
+                        fprintf(stderr, " scr %.4g,%.4g", sc[3] ? sc[0] / sc[3] : 0, sc[3] ? sc[1] / sc[3] : 0);
+                    }
                     for (st = 0; st < 4; st++) {
                         uint32_t g0 = r[(0x3C0 + st * 16) / 4];
                         float t4[4] = { 0, 0, 0, 1 }, o4[4];
@@ -3741,14 +3757,19 @@ static void mtl_draw_raw_inner(const Nv2aRawBatch *b)
                         r[0x260 / 4], r[0x264 / 4], r[0xAA0 / 4], r[0xAA4 / 4], r[0xAC0 / 4], r[0xAC4 / 4],
                         r[0x1E40 / 4], r[0x1E44 / 4], r[0x288 / 4], r[0x28C / 4], r[0xA60 / 4], r[0xA64 / 4],
                         r[0xA80 / 4], r[0xA84 / 4]);
-                {   static int once; if (!once++) for (st = 0; st < 2; st++) {
+                {   static int once; if (!once++ || getenv("RECOMP_DL_TEXGEN")[0] == '2') for (st = 0; st < 2; st++) {
                         const float *tm = (const float *)&r[(0x6C0 + st * 64) / 4];
                         const float *pl = (const float *)&r[(0x840 + st * 64) / 4];
                         fprintf(stderr, "\n[dlt] st%u tm", st);
                         for (c = 0; c < 16; c++) fprintf(stderr, " %.4g", tm[c]);
                         fprintf(stderr, " planes");
                         for (c = 0; c < 16; c++) fprintf(stderr, " %.4g", pl[c]);
-                    } }
+                    }
+                    fprintf(stderr, "\n[dlt] composite");   /* with mv: the projection (near/far) */
+                    for (c = 0; c < 16; c++) fprintf(stderr, " %.6g", b->composite[c]);
+                    fprintf(stderr, " mv");
+                    for (c = 0; c < 16; c++) fprintf(stderr, " %.6g", mv[c]);
+                }
             }
             if (b->vertex_count <= 6 && (b->attr_present & 8))
                 for (k = 0; k < b->vertex_count; k++) {   /* hppoa: each vertex's diffuse */
@@ -3788,6 +3809,13 @@ static void mtl_draw_raw_inner(const Nv2aRawBatch *b)
         }
         if (sk && fidx >= sa && fidx <= sb)
             return;
+        {   /* hppoa: RECOMP_MTL_SKIP_TEX=<va> (debug A/B): drop every draw that samples that texture in any stage */
+            static int st = -1; static uint32_t stva;
+            if (st < 0) { const char *e = getenv("RECOMP_MTL_SKIP_TEX"); st = e != NULL; if (e) stva = (uint32_t)strtoul(e, NULL, 16); }
+            if (st) for (uint32_t k = 0; k < 4; k++)
+                if ((r[(0x1B00u + k * 0x40u) / 4 + 3] & 0x40000000u) && b->tex_va[k] == stva)
+                    return;
+        }
     }
     s = target(&b->surface, b->zeta_va, &d);
     if (!s)
@@ -3976,6 +4004,19 @@ static void mtl_draw_raw_inner(const Nv2aRawBatch *b)
         }
 
         memset(&fb, 0, sizeof fb);
+        {   /* hppoa: SET_ZMIN_MAX_CONTROL ZCLAMP_EN = CULL (bits 4-7 = 0): pixels outside the clip range
+             * (SET_CLIP_MIN/MAX) are dropped (xemu glsl/psh.c). Not with the W-buffer (its depth is w).
+             * RECOMP_MTL_ZCULL=0: off (depth only clamped, as before). */
+            static int zc = -1;
+            if (zc < 0) { const char *e = getenv("RECOMP_MTL_ZCULL"); zc = !(e && *e == '0'); }
+            if (zc && !key.wdepth && !(r[0x1D78 / 4] & 0xF0u)) {
+                float cmin, cmax, zm = (float)zmax_of(r);
+                memcpy(&cmin, &r[0x394 / 4], 4); memcpy(&cmax, &r[0x398 / 4], 4);
+                if (cmax > cmin) {
+                    fb.zcull[0] = 1.0f; fb.zcull[1] = cmin / zm; fb.zcull[2] = cmax / zm;
+                }
+            }
+        }
         for (i = 0; i < 4; i++) {
             fb.tscale[i][0] = tscale[i][0];
             fb.tscale[i][1] = tscale[i][1];
@@ -4703,6 +4744,16 @@ static void mtl_flip_inner(void)
                 char path[320];
                 snprintf(path, sizeof path, "%sat%05u.bmp", dump_prefix[0] ? dump_prefix : "f", s_frame);
                 dump_surface(s, path);
+                for (const char *e = getenv("RECOMP_GL_DUMP_SURF"); e && *e; ) {   /* hppoa: the targets too */
+                    uint32_t va = (uint32_t)strtoul(e, NULL, 16);
+                    MtSurf *t = surf_find(va);
+                    if (t && t->tex) {
+                        snprintf(path, sizeof path, "%sat%05u_%08X.bmp", dump_prefix[0] ? dump_prefix : "f", s_frame, va);
+                        dump_surface(t, path);
+                    }
+                    e = strchr(e, ',');
+                    if (e) e++;
+                }
                 s_ft_dumped = 1;
                 left--;
             }

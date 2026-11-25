@@ -188,6 +188,7 @@ extern void nv2a_pb_trap_unlock(void);
 extern void nv2a_pb_trap_taken(void);
 
 static int fps60(void);
+static uint32_t s_ff_cs;    /* Cutscenes: the one being fast-forwarded (flips on every vblank meanwhile) */
 
 void sub_0026E470(void)
 {
@@ -203,7 +204,7 @@ void sub_0026E470(void)
      * bit 3 = flip at once when late (same D3D code and format as CoS, NFSU1, NFSU2). The title asks for 2
      * vblanks (D3DPRESENT_INTERVAL_TWO | IMMEDIATE, 0x80000002); HPPOA_FPS=60 rewrites it to 1 as the trap
      * is taken. */
-    if (nsource && (nv[0x400704 / 4] & 0xFFFFu) == 0x0100u && fps60()) {
+    if (nsource && (nv[0x400704 / 4] & 0xFFFFu) == 0x0100u && (fps60() || s_ff_cs)) {
         uint32_t data = nv[0x400708 / 4];
         if ((data & 0x1Fu) == 1u && ((data >> 5) & 7u) > 1u) {
             static int told;
@@ -361,7 +362,7 @@ void sub_001E7640(void)     /* a class's +0x14 getter, thiscall */
 {
     uint32_t obj = ecx;
     sub_001E7640_gen();
-    if (obj == GAME_CLOCK && fps60())
+    if (obj == GAME_CLOCK && (fps60() || s_ff_cs))
         eax = s_fixed;
 }
 
@@ -389,41 +390,122 @@ static int cutscene_log(void)
     if (v < 0) { const char *e = getenv("HPPOA_CUTSCENE_LOG"); v = e && *e == '1'; }
     return v;
 }
-/* Skip Cutscenes (overlay: Tweaks, HPPOA_SKIP_CUTSCENES, on unless 0): Start or Back while a skippable cutscene
- * plays ends it the game's own way, sub_00061520(this, force = 1) -> sub_00062170, the path the menu's
- * SkipCutscene takes. Only skippable ones (+0x99 != 0): the title's unskippable ones drive the level script, and
- * ending one (the dementor scene, inhogex_07) left the next scene waiting forever. The press is asked for in
- * XInputGetState and kept from the game while a skippable cutscene plays (Start would pause it); the skip itself
- * runs on the game's thread at the next clock tick, before the frame's tasks. */
+/* The menus' screen (SetTraceControlMode, sub_00020220, cdecl: a name): "ig" in play, "widescreen" while a scripted
+ * scene of the level runs with the black bars (no orchestrator cutscene: +0x8C stays 0; the Marauder's Map
+ * challenge's opening, Night 0's corridor with the twins), "fe" the front end. HP-POA-Xbox-Recomp's hle_quit.c
+ * (MIT; facts only). */
+static char s_screen[24];
+extern void sub_00020220_gen(void);
+void sub_00020220(void)
+{
+    uint32_t a = MEM32(esp + 4);
+    size_t i = 0;
+    for (; a && i + 1 < sizeof s_screen && MEM8(a + i); i++) s_screen[i] = (char)MEM8(a + i);
+    s_screen[i] = 0;
+    if (cutscene_log()) fprintf(stderr, "[cutscene] screen %s (game ms %u)\n", s_screen, MEM32(GAME_CLOCK + 4));
+    sub_00020220_gen();
+}
+static int letterbox_scene(void) { return !strcmp(s_screen, "widescreen"); }
+
+/* Skip Cutscenes (overlay: Tweaks, HPPOA_SKIP_CUTSCENES, on unless 0): Start or Back in any cutscene.
+ * - Skippable ones (+0x99 != 0) end the game's own way, sub_00061520(this, force = 1) -> sub_00062170, the path
+ *   the menu's SkipCutscene takes.
+ * - Unskippable ones are fast-forwarded (HPPOA_CUTSCENE_FF, on unless 0): the game clock's fixed step (+0x14) is
+ *   HPPOA_FF_STEP ms a tick (100, the step the timer allows itself after a hitch) and every frame flips on the
+ *   next vblank, until the manager's cutscene changes, with the sound muted: about 6x (a 15 s scene in 2.5 s).
+ *   The level script's scripted scenes with the black bars (screen "widescreen", no orchestrator cutscene) are
+ *   fast-forwarded the same way until the screen changes.
+ *   Why not end them: the level script plays a cutscene with PlayScene(orc, done, skip) (sub_00061F10 keeps the
+ *   two script functions at +0x1C and +0x20 of the cutscene). The natural end (sub_00062100 -> sub_00062090)
+ *   runs the timeline to its last event, then calls `done`. A skip (sub_00062170) puts the orchestrator in skip
+ *   mode (sub_001A50D0(1)), so events after the press are never fired, calls `done`, then also `skip`. The title
+ *   only offers that for skippable scenes; for the others the script was never written to be cut short (the
+ *   dementor's Cutscene_EnterTheDementor queues inhogexcam_01 right after inhogex_07, its `skip` only starts
+ *   music), and play test 3 stuck in a looping inhogexcam_01 after a forced end of inhogex_07 (a staged run with
+ *   the forced end, build/t/forceA, went on instead: the loop's exact trigger is not reproduced).
+ *   Fast-forwarded, the scene plays out: every timeline event fires and `done` runs as on the console.
+ *   HPPOA_CUTSCENE_FF=force keeps the forced end (for A/B tests only).
+ * The press is asked for in XInputGetState and kept from the game while a cutscene plays (Start would pause
+ * it); the skip runs on the game's thread at the next clock tick, before the frame's tasks. */
+#define FF_LETTERBOX 1u     /* s_ff_cs while a scripted "widescreen" scene is fast-forwarded */
 static volatile int s_skip_req;
+extern void xa2_set_mute(int on);
 static int skip_cutscenes_on(void)
 {
     const char *e = getenv("HPPOA_SKIP_CUTSCENES");
     return !(e && *e == '0');
 }
-static int cutscene_skippable(void) { return MEM32(CUTSCENES + 0x8C) != 0 && MEM8(CUTSCENES + 0x99) != 0; }
+enum { FF_OFF, FF_ON, FF_FORCE };
+static int cutscene_ff_mode(void)   /* HPPOA_CUTSCENE_FF: unset/1 fast-forward, 0 off, force: the old forced end */
+{
+    static int v = -1;
+    if (v < 0) {
+        const char *e = getenv("HPPOA_CUTSCENE_FF");
+        v = !e || !*e || *e == '1' ? FF_ON : !strcmp(e, "force") ? FF_FORCE : FF_OFF;
+    }
+    return v;
+}
+static uint32_t ff_step(void)
+{
+    static uint32_t v;
+    if (!v) { const char *e = getenv("HPPOA_FF_STEP"); v = e && atoi(e) > 0 ? (uint32_t)atoi(e) : 100u; }
+    return v;
+}
+static int cutscene_skip_press_taken(void)   /* the game is not to see Start/Back now */
+{
+    if (MEM32(CUTSCENES + 0x8C))
+        return MEM8(CUTSCENES + 0x99) != 0 || cutscene_ff_mode() != FF_OFF;
+    return letterbox_scene() && cutscene_ff_mode() == FF_ON;
+}
 extern void sub_00061520(void);
 static void cutscene_watch(void)
 {
     static uint32_t last_cs, last_sk;
+    static uint64_t ff_t0;
+    static uint32_t ff_g0;
     uint32_t cs = MEM32(CUTSCENES + 0x8C), sk = MEM8(CUTSCENES + 0x99);
     if (cutscene_log() && (cs != last_cs || sk != last_sk))
         fprintf(stderr, "[cutscene] %08X skippable %u (game ms %u, wall %llu ms)\n", cs, sk, MEM32(GAME_CLOCK + 4),
                 (unsigned long long)mono_ms());
     last_cs = cs, last_sk = sk;
+    {   /* dev: HPPOA_FF_AUTO=<n>: the next n unskippable cutscenes are fast-forwarded without a press */
+        static int left = -1; static uint32_t done;
+        if (left < 0) { const char *e = getenv("HPPOA_FF_AUTO"); left = e ? atoi(e) : 0; }
+        if (cs && cs != done && cs != s_ff_cs && !sk && left > 0) { left--; done = cs; s_skip_req = 2; }
+        if (!cs) done = 0;
+    }
+    if (s_ff_cs && (s_ff_cs == FF_LETTERBOX ? cs || !letterbox_scene() : cs != s_ff_cs)) {   /* it ended */
+        MEM32(GAME_CLOCK + 0x14) = s_fixed;     /* the title's own step (60 fps: split again by the next tick) */
+        xa2_set_mute(0);
+        fprintf(stderr, "[cutscene] %08X fast-forward done: %u game ms in %llu wall ms (next %08X, screen %s)\n",
+                s_ff_cs, MEM32(GAME_CLOCK + 4) - ff_g0, (unsigned long long)(mono_ms() - ff_t0), cs, s_screen);
+        s_ff_cs = 0;
+    }
     if (s_skip_req) {
+        int autoreq = s_skip_req == 2;
         s_skip_req = 0;
-        if (cs && sk) {
+        if (cs && (sk || (cutscene_ff_mode() == FF_FORCE && !autoreq))) {
             uint32_t s_esp = esp, s_eax = eax, s_ebx = ebx, s_ecx = ecx, s_edx = edx, s_esi = esi, s_edi = edi,
                      s_ebp = g_ebp;
+            if (cutscene_log())
+                fprintf(stderr, "[cutscene] %08X script functions: done %08X skip %08X\n", cs, MEM32(cs + 0x1C),
+                        MEM32(cs + 0x20));
             esp -= 4; MEM32(esp) = 1;           /* force */
             esp -= 4; MEM32(esp) = 0;           /* return address, unused */
             ecx = CUTSCENES;
             sub_00061520();
             fprintf(stderr, "[cutscene] %08X skipped (skippable %u): %s\n", cs, sk, (eax & 0xFF) ? "ended" : "refused");
             esp = s_esp; eax = s_eax; ebx = s_ebx; ecx = s_ecx; edx = s_edx; esi = s_esi; edi = s_edi; g_ebp = s_ebp;
+        } else if (!s_ff_cs && (cutscene_ff_mode() == FF_ON || autoreq) && (cs || letterbox_scene())) {
+            s_ff_cs = cs ? cs : FF_LETTERBOX;
+            ff_t0 = mono_ms(), ff_g0 = MEM32(GAME_CLOCK + 4);
+            xa2_set_mute(1);
+            fprintf(stderr, "[cutscene] %08X fast-forward (%s), %u ms a tick\n", s_ff_cs,
+                    cs ? "not skippable" : "scripted scene, screen widescreen", ff_step());
         }
     }
+    if (s_ff_cs && s_fixed <= 10000u)           /* above 10 s the clock is paused: left alone */
+        MEM32(GAME_CLOCK + 0x14) = ff_step();
 }
 extern void sub_0001FB90_gen(void);
 void sub_0001FB90(void)
@@ -555,9 +637,62 @@ static void dev_poke(void)
     }
 }
 
+/* Dev: HPPOA_CALL_SCRIPT="<s>:<function>,...": <s> seconds after the first clock tick, run that function of the
+ * level script by name, as PlayScene does for its callbacks: the level's script module (current level [0x30E2B4]
+ * +0xC4, the module at [+0xA8] + index * 0x50 + 0x1C), its lookup (vtable +8 through sub_0006A300) and the script
+ * VM's call (sub_001B8C70, sub_001B88D0). For tests only (the train's dementor scene without its fights:
+ * Cutscene_MBOM_Defeated, CutScene_DinerCarDoTauntRon, Cutscene_DinerCarMalfoyAttacks, Cutscene_DinerCarDuelWon,
+ * Cutscene_EnterTheDementor). */
+extern void sub_0006A300(void);
+extern void sub_001B8C70(void);
+extern void sub_001B88D0(void);
+static void dev_call_script(void)
+{
+    static int n = -1, i; static double at[8]; static char fn[8][64]; static uint64_t t0;
+    if (n < 0) {
+        const char *e = getenv("HPPOA_CALL_SCRIPT");
+        n = 0; t0 = mono_ms();
+        while (e && *e && n < 8) {
+            at[n] = atof(e); const char *c = strchr(e, ':'); if (!c) break;
+            size_t l = strcspn(c + 1, ","); if (l > 63) l = 63;
+            memcpy(fn[n], c + 1, l); fn[n][l] = 0; n++;
+            e = c + 1 + l; if (*e == ',') e++;
+        }
+    }
+    if (i >= n || (double)(mono_ms() - t0) < at[i] * 1000.0) return;
+    uint32_t s_esp = esp, s_eax = eax, s_ebx = ebx, s_ecx = ecx, s_edx = edx, s_esi = esi, s_edi = edi, s_ebp = g_ebp;
+    uint32_t lv = MEM32(0x0030E2B4u), idx = lv ? MEM32(lv + 0xC4) : 0, mod = 0, h = 0, ok = 0;
+    if (lv && (int)idx > 0) mod = MEM32(MEM32(lv + 0xA8) + idx * 0x50u + 0x1Cu);
+    if (mod) {
+        uint32_t name = (esp - 256) & ~15u, outp;
+        strcpy((char *)XBOX_PTR(name), fn[i]);
+        esp = name - 16; outp = esp; MEM32(outp) = 0;
+        esp -= 4; MEM32(esp) = outp;
+        esp -= 4; MEM32(esp) = name;
+        esp -= 4; MEM32(esp) = 0;
+        ecx = mod;
+        sub_0006A300();
+        ok = eax & 0xFF; h = MEM32(outp);
+        if (ok) {
+            esp = outp - 16;
+            esp -= 4; MEM32(esp) = 0;
+            sub_001B8C70();
+            ecx = eax;
+            esp -= 4; MEM32(esp) = 0;
+            esp -= 4; MEM32(esp) = h;
+            esp -= 4; MEM32(esp) = 0;
+            sub_001B88D0();
+        }
+    }
+    fprintf(stderr, "[dev] script %s: module %08X handle %08X %s (game ms %u)\n", fn[i], mod, h, ok ? "called" : "not found",
+            MEM32(GAME_CLOCK + 4));
+    esp = s_esp; eax = s_eax; ebx = s_ebx; ecx = s_ecx; edx = s_edx; esi = s_esi; edi = s_edi; g_ebp = s_ebp;
+    i++;
+}
 extern void sub_001A7450_gen(void);
 void sub_001A7450(void)
 {
+    if (ecx == GAME_CLOCK) dev_call_script();
     static int log = -1;
     static uint64_t real0;
     static uint32_t game0, frames0, clamps, floors, callers[4], ticks[4];
@@ -827,7 +962,7 @@ void sub_002C0BA6(void)
         if (s_xi[i].port == 0) {
             static uint8_t was;
             uint8_t now = rep[2] & 0x30u;       /* Start, Back */
-            if (skip_cutscenes_on() && cutscene_skippable()) {
+            if (skip_cutscenes_on() && cutscene_skip_press_taken()) {
                 if (now & ~was) s_skip_req = 1;
                 MEM16(st + 4) = rep[2] & ~0x30u;    /* kept from the game */
             }
