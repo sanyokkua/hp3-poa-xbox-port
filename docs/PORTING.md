@@ -446,6 +446,55 @@ frame, for scripted runs), and `[dl]` prints stage 0's texture coordinates (`uv0
    shows, but plain `a` presses (100 ms) did not open it in `T3`/`T10`, while `T1`'s `lsl+a` (stick held into the
    trunk) did. Open: why the prompt does not take a bare A (facing?), not checked on the owner's pad.
 
+## 1g. Play test 2 (60 fps, 2026-11-25): subtitles and frame drops
+
+1. **Subtitles cut on the right and in half (root cause found; fix is in the renderer, not applied here).**
+   - Symptom (owner's screenshot 18, recording 10.00.03): the train cutscene's "Blimey! Twelve years ago Sirius Black
+     mur" cut on the right, its second line cut through the letters. Scripted (`build/t/sub2`, `capture` + shots at
+     78-92 s): the same "Blimey!" text stays on screen for 15 s, centred in some shots and cut in others.
+   - Not the Apt text field size (1d item 4): the subtitles do not go through `sub_001ADFC0`. They have their own
+     system: `sub_001AEFB0` lays the line out with `sub_001B08C0` into a 512x256 byte buffer `0x39A2D0`, writing its
+     size to `0x30C2A8`/`0x30C2AC`; `sub_001AEF40` swizzles the buffer into the 512x256 P8 texture `[0x3BA2E0]`
+     (`0x831DD000`); each frame `sub_001AF290` draws it in a fixed box x 100-540, y 386-438 (`sub_001AEE20`), the
+     text centred: `sub_001AF050` x0 = 100 + (440 - W) / 2, u = 0..(540 - x0) / 512; `sub_001AF0B0` the same for the
+     height in 52 (taller text scrolls, `sub_001AF110`). So the box follows the size of the current line.
+   - Measured (dev aid, `build/t/evidence/subtitle_meas_aid.diff`, not committed: the size and a hash of the buffer
+     and texture at each vblank, dumps): each new line ("Imagine it - a single curse...", W 215; "Crookshanks! No!",
+     W 133; "Get out of it!", W 98) is laid out, the buffer and the guest texture hold it
+     (`build/t/evidence/subtitle_canvas_guest_memory.png`), but the screen keeps "Blimey!" in the new, smaller box:
+     the renderer never uploads the texture again (`RECOMP_TEX_CHANGES=1`: no `831DD000 changed` line in the run).
+   - **Root cause: the Metal renderer's texture change check misses it** (`nv2a_metal.m` `tex_get`): it hashes one
+     dword every `bytes / 256` bytes, and `tex_bytes()` counts 4 bytes a texel for every uncompressed format, so for
+     this P8 texture `bytes` is 512 KB: 64 dwords inside the texture (every 2048 bytes = texels at u multiple of 64,
+     v multiple of 32 in swizzled order), plus 192 outside it. A line of thin glyphs changes none of them.
+   - Check: bumping `nv2a_tex_replace_gen` (every texture asked again) whenever the guest texture changes (same aid,
+     `MEAS_BUMP=1`, `build/t/sub7`): every line shows, whole and centred
+     (`build/t/evidence/subtitles_stale_before.png` vs `subtitles_forced_refresh.png`).
+   - Fix (not applied: `nv2a_metal.m` is being changed on main by the renderer work):
+     `build/t/evidence/p8_texture_hash.patch` hashes P8 textures over their real size (w x h bytes), every byte
+     (8 bytes a step; 128 KB for the canvas). The patch is not built or run yet; the check above shows what it must
+     give. The same check is in every port's renderer (NFSU1, NFSU2, HP1,
+     CoS: same `bytes_hash`/`tex_bytes`), so any text drawn into a reused P8 texture can stay stale there too.
+
+2. **Frame drops at 60 fps: measured, nothing in the frame loop to fix.**
+   - Recording (OCR of the fps counter, 2 samples a second over 672 s): 621 seconds show 60 fps, and in 611 of them the
+     worst frame of the second is 17 ms (the rest 18-27 ms). The drops are (a) 7 loading screens, 3-5 s each at 20 fps (frames 50-60 ms,
+     the `[hitch] ... 13 draws` / `17 draws` lines), and (b) single frames: two first-time shader compiles (310 ms,
+     6 programs, at 342 s; 201 ms, 2 programs, at 532 s; the cache keeps them for the next run) and four frames
+     where the game loads a package on its own thread (cutscene or portal `.pkg`): 61 ms (571 draws), 128 ms
+     (1093 draws), 89 ms, 73 ms. Log time = recording time + 60274.3 s.
+   - Loading screens: `sample` during the New Game load (`build/t/prof1`): every thread waits. The game thread spins
+     in the cutscene manager (`sub_000611F0`: yield until the cutscene's `+0xA6` flag clears), the pushbuffer thread,
+     audio and loader threads sleep. Same frame times at 30 fps (`B1`, `T1` on main: 31 frames over 50 ms, mean
+     55 ms, as at 60 fps): not a 60 fps or host cost.
+   - Owner's settings (scale 400, SSAO, `build/t/perf1`, the train route, `RECOMP_FPS_LOG=1`): flip p99 16.8-17.6 ms
+     in every 10 s window outside the load, vblank phase error 0.01 ms; GPU p50 3.4-3.8 ms in menus and 11-13 ms in
+     the cutscene, corridor and luggage car, p99 15-20 ms, 0-13 frames a window over 16.7 ms (the next frame
+     absorbs it). That margin is the risk in heavier scenes. SSAO is not the cost: the same route with bloom
+     (`build/t/perf2`) has GPU p50 10-13 ms, p99 15.6-17.8 ms; the 400 % scale is.
+   - Not changed: the renderer (compiles, GPU load) is outside this branch, and the remaining single-frame hitches are
+     the game's own synchronous loads. Before/after numbers: none (no change made).
+
 ## 1e. Performance: shader compile stalls (play test 1, issue 3)
 
 The owner's play test (60 fps) showed drops to 51 fps with single frames of 170-600 ms, each logged as
@@ -560,6 +609,11 @@ Not applied to the other repos (rule: an engine fix found in one Xbox port goes 
 9. **`tools/difftest.py`: low 64 KB mapped, `DIFF_BREAK`** (1d item 4). The copy in hpcos-xbox-port stops at the first SEH
    prologue (`mov eax, fs:[0]` reads address 0 in Unicorn's 32-bit mode); copy the mapping there and to any port that has
    the tool.
+10. **Renderer: P8 textures rewritten in place stay stale** (`nv2a_metal.m` `tex_get`, 1g item 1;
+   `build/t/evidence/p8_texture_hash.patch`, not applied yet). `tex_bytes()` counts 4 bytes a texel for P8, and the
+   sampled hash reads 256 dwords over that size, so a P8 texture gets 64 samples (every 2048 bytes) and a new line of
+   text in a reused texture is missed. Every port has the same `bytes_hash`/`tex_bytes` (NFSU1, NFSU2, HP1, CoS): check
+   their text and subtitle textures with `RECOMP_TEX_CHANGES=1` after applying it.
 
 10. **Metal: polygon offset slope scaled by the render scale** (`nv2a_metal.m`, `apply_dynamic`'s `slope_k`; 1d item 5).
     Every port renders upscaled with the same backend, so every decal with a slope-scaled offset got 1/scale of it.
