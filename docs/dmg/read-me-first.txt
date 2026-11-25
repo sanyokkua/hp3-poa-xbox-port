@@ -14,4 +14,4 @@ Harry Potter and the Prisoner of Azkaban for the original Xbox, USA.
 4. "Harry Potter Prisoner of Azkaban" is put in Applications and opens. Play it from there from now on.
    Settings menu: Back + Start on a controller, F1 (fn+F1 on a MacBook) or Cmd+,. Full screen on/off: F11.
 
-This DMG holds no game code and no game data. Details, credits and the source: https://github.com/sanyokkua/hppoa-xbox-port
+This DMG holds no game code and no game data. Details, credits and the source: https://github.com/sanyokkua/hp3-poa-xbox-port

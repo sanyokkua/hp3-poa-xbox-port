@@ -41,7 +41,7 @@ cp build/deps/lib/libSDL2-2.0.0.dylib build/deps/lib/libSDL3.0.dylib "$KIT/libs/
 cp -R LICENSES/. "$KIT/licenses/"
 cp -R build/deps/share/licenses/. "$KIT/licenses/"
 cp LICENSE NOTICE THIRD_PARTY_NOTICES.md "$KIT/"
-echo "Harry Potter Prisoner of Azkaban for Mac $VERSION ($(git rev-parse --short HEAD)): the source of everything in this kit is https://github.com/sanyokkua/hppoa-xbox-port/tree/v$VERSION (engine/ = the engine of nfsu2-xbox-port: xboxrecomp by sp00nz, the Apple host and Metal renderer of nfsu2-ios by myUdav4iik, NFSU2Deadware's engine patches, fixes found by MiddleDucky's HP-PS-, HP-COS- and HP-POA-Xbox-Recomp and Barthes-Recompiled's HP3-Recompiled, and this project's changes)" > "$KIT/SOURCE.txt"
+echo "Harry Potter Prisoner of Azkaban for Mac $VERSION ($(git rev-parse --short HEAD)): the source of everything in this kit is https://github.com/sanyokkua/hp3-poa-xbox-port/tree/v$VERSION (engine/ = the engine of nfsu2-xbox-port: xboxrecomp by sp00nz, the Apple host and Metal renderer of nfsu2-ios by myUdav4iik, NFSU2Deadware's engine patches, fixes found by MiddleDucky's HP-PS-, HP-COS- and HP-POA-Xbox-Recomp and Barthes-Recompiled's HP3-Recompiled, and this project's changes)" > "$KIT/SOURCE.txt"
 codesign --force --sign - "$APP" >/dev/null 2>&1
 # the DMG's other files
 cp docs/dmg/read-me-first.txt "$STAGE/Read me first.txt"

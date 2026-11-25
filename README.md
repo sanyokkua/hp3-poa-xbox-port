@@ -53,7 +53,7 @@ How it was made, step by step: [docs/PORTING.md](docs/PORTING.md). Changes per v
 You need an **Apple Silicon Mac with macOS 15 or newer** and your own disc image (ISO) of the **USA Xbox release** of
 *Harry Potter and the Prisoner of Azkaban*. Nothing of the game is included: the installer builds it on your Mac from your disc.
 
-1. Download `Harry-Potter-Prisoner-of-Azkaban-<version>.dmg` from [Releases](https://github.com/sanyokkua/hppoa-xbox-port/releases) (or build it with `tools/make_dmg.sh`, see below), open it and drag
+1. Download `Harry-Potter-Prisoner-of-Azkaban-<version>.dmg` from [Releases](https://github.com/sanyokkua/hp3-poa-xbox-port/releases) (or build it with `tools/make_dmg.sh`, see below), open it and drag
    **Harry Potter Prisoner of Azkaban Installer** to Applications.
 2. **Open it.** The installer isn't notarized by Apple, so the first time macOS refuses. Close that message (don't move it to the
    Trash), go to **System Settings > Privacy & Security**, scroll to the message about it, click **Open Anyway** and confirm.
