@@ -613,6 +613,54 @@ model-view of every draw (`[dlt]`); `RECOMP_GL_DUMP_SURF` also works with `RECOM
 `20000:start,23000:start,40000:lsd,43000:a[,46500:lsd],48500:a` (slot 1 = SaveGame-0, the hall; SaveGame-1/2 = the
 sixth-floor landing), `train2_script.txt` (New Game to Flipendo, skip-logo settings, warm shader cache).
 
+## 1j. Play test 3: the library rug and the plank patch (issue 2)
+
+Images 21-25 and 30 (library, recording 13.49.25 about 11:20-11:40, right after the Peeves cutscene, camera high above
+the rug's near end) and 32-35 (the gargoyle door at the start of the Marauder's challenge, playing as Ron).
+
+1. **Not the game's culling.** The rug is three meshes drawn one after the other, last in the room pass: `[da]` lines
+   (`RECOMP_DL_ATTRS=0605`, new) show the pieces with 208, 40 and 126 indices (local z 0..-1883, attributes 0605: two
+   texture coordinate sets) in every library frame together: 899 frames each over a 25 s walk, never one without the others.
+   A cull (room/portal walk, HP-POA-Xbox-Recomp's `hle_portals.c`) would drop a piece; the owner's cut runs through the
+   middle of the near piece. So the draws are there and something hides part of them.
+2. **Root cause: the per-vertex z clamp in `nv2a_clip` (renderer; xemu audit finding 1).** Each vertex's z was clamped to
+   [0, w] in the vertex shader. PoA projects with near 10 and far ~10010 game units: clip z = 16,794,000 w - 167,940,000
+   (composite rows, `[dl]` now prints `mz`/`mw`), so a vertex between the eye and the near plane (0 < w < 10) has z down
+   to -1.68e8, ten times the whole depth range; the clamp moves it to 0 and tilts the depth of every triangle using it.
+   The rug's triangles run end to end (up to 1,883 units), so when the camera hangs over a rug end, the triangle's far
+   part is pushed back behind the floor and disappears along the triangle's edge: a straight line, near half gone, gone
+   or back as the camera moves a few units. xemu leaves z alone and clamps or culls per pixel (`gl/draw.c` depth clamp,
+   `glsl/psh.c` clipRange); Metal already clamps per pixel (`MTLDepthClipModeClamp`), and main's clip-range cull (1i)
+   drops the pixels in front of the near plane on the CULL draws.
+   - Measured (`RECOMP_MTL_ZCLAMP_LOG=1`, new: `[zc]` lists fixed-function draws with a vertex at 0 < w and z < 0 or
+     z > zmax w): on a library walk, floor and wall draws have such vertices in nearly every frame, and the rug pieces in
+     long runs of frames (wmin 0.1-9 units, `[da]` `wmin`) whenever the camera is over a rug end.
+3. **Fix** (`nv2a_metal_msl.c` `nv2a_clip`): z is passed unclamped; depth is clamped (CLAMP draws) or culled (CULL draws,
+   1i) per pixel only. `RECOMP_MTL_ZCLAMP_PIXEL=0` brings the vertex clamp back (`u_fog.w`, a runtime uniform, so no
+   shader rebuild); `RECOMP_MTL_ZCLAMP_PIXEL=0ab` alternates the two every 2 s of wall time and logs `[mtl] depth clamp now
+   per ...`, for A/B shots of a still scene in one run.
+4. **Verification, and what is missing.**
+   - Shader test: 461 program pairs (61 from the owner's `progcache.bin`), 0 failures.
+   - Library, SaveGame-1 (`build/t/load1.txt` then the door; `HPPOA_POKE8` CameraTargetYOffset `0x36AACC` = 150.0 for a high
+     camera in `AB_hi`): static A/B in one run with `0ab` while a rug vertex sat in the near slab (w 2.7 and 8.5,
+     `build/t/LE_z1`, `AB_1200`): pixel and vertex shots identical except Harry's idle animation
+     (`build/t/evidence/pt3_rug_static_ab_pixel_vs_vertex.png`, `_diff.png`, `_2.png`, `_2_diff.png`). No regression.
+   - **The owner's cut was not reproduced in my own shots**, with either clamp: about 900 shots over walks and camera
+     turns on the rug at 30 fps (and the owner's settings at 60 fps) showed none, and the frames where a rug vertex was in
+     the near slab drew identically in both modes (the bent triangle was off screen in those camera positions). The
+     owner's camera (high over the near end, after the Peeves cutscene, Ron pushing it) was not reached by script. So the
+     cause is shown by the numbers and xemu, not by a before/after pair of the cut.
+   - The plank patch at the gargoyle door (images 32-35) was not reached: SaveGame-2 starts in the challenge hall, and
+     the scripted walk fell into the collapsing floor. Same mechanism expected (a large floor quad near the camera,
+     playing as Ron with a low camera).
+   - Owner check: the library rug after the Peeves cutscene and the gargoyle door; if a cut still shows, F12 there and
+     `RECOMP_MTL_ZCLAMP_PIXEL=0` for the A/B.
+
+Dev aids added: `RECOMP_MTL_ZCLAMP_PIXEL=0`/`0ab`, `RECOMP_MTL_ZCLAMP_LOG=1` (`[zc]`), `RECOMP_DL_ATTRS=<hex>` (`[da]`: one
+line per draw with exactly those attributes, with the smallest positive and largest negative w), `[dl]` `zb`/`zmm`/`mz`/`mw`
+(composite z and w rows), `HPPOA_POKE8_AT=<ms>` (pokes only after that much wall time, e.g. TimeFactor `0x3676D8` = 0 for a
+still scene; the camera keeps moving).
+
 ## 1e. Performance: shader compile stalls (play test 1, issue 3)
 
 The owner's play test (60 fps) showed drops to 51 fps with single frames of 170-600 ms, each logged as
@@ -762,6 +810,7 @@ Dev scripts (inherited): `tools/stubcheck.py` (is any empty stub real code), `to
 - **Play test 1 open items** (1d): Malfoy's orange/blinking face (not reproduced; the dining car not reached by script). The Options "(" glyphs are fixed by a
   hook (1d item 4); whether the console shows them too is not checked.
 - **Renderer** not checked: fog, W-buffer bit of CONTROL0, post-effect thresholds (CoS's).
+- **Play test 3** (1j): the rug/plank cut not reproduced in a scripted run (fix from the cause, A/B shows no change).
 - **Play test 3** (1h): character shadow strength vs the console; AO units (near 10 / far 10010) left for the owner; specular lighting missing.
 - **Host pad in scripted tests**: a controller connected to the Mac also drives the overlay during `tools/run_test.sh` runs (one run's
   settings were changed that way); check `[overlay] open` in a test log.

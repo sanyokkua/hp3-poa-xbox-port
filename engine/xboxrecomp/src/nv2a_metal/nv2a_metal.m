@@ -3625,6 +3625,26 @@ static void mtl_draw_raw_inner(const Nv2aRawBatch *b)
                     fprintf(stderr, "[zc]   box %.0f..%.0f %.0f..%.0f %.0f..%.0f\n", lo[0], hi[0], lo[1], hi[1], lo[2], hi[2]);
             }
         }
+        {   /* hppoa dev: RECOMP_DL_ATTRS=<hex>: one short [da] line per draw with exactly those attributes (which
+             * pieces of a mesh a frame draws, e.g. 605 = the library rug's) */
+            static int da = -1; static uint32_t da_m;
+            if (da < 0) { const char *e = getenv("RECOMP_DL_ATTRS"); da = e != NULL; if (e) da_m = (uint32_t)strtoul(e, NULL, 16); }
+            if (da && b->attr_present == da_m) {
+                float p[4] = { 0, 0, 0, 1 }, wmin = 1e30f, wneg = -1e30f;
+                if (b->attr_direct & 1u) {
+                    for (uint32_t v = 0; v < b->vertex_count; v++) {   /* the smallest positive w, the largest negative */
+                        float q[4], w;
+                        attr_to_float4(b, 0, v, q);
+                        w = b->composite[12] * q[0] + b->composite[13] * q[1] + b->composite[14] * q[2] + b->composite[15] * q[3];
+                        if (w > 0.0f && w < wmin) wmin = w;
+                        if (w <= 0.0f && w > wneg) wneg = w;
+                    }
+                    attr_to_float4(b, 0, 0, p);
+                }
+                fprintf(stderr, "[da] f%u #%u n %u tex %08X v0 %.0f %.0f %.0f wmin %.1f wneg %.1f\n", s_frame, fidx, n,
+                        b->tex_va[0], p[0], p[1], p[2], wmin, wneg);
+            }
+        }
         static int dlrt = -1; static uint32_t dlrt_va;   /* hppoa: RECOMP_DL_RT=<va>: every draw into that target */
         if (dlrt < 0) { const char *e = getenv("RECOMP_DL_RT"); dlrt = e != NULL; if (e) dlrt_va = (uint32_t)strtoul(e, NULL, 16); }
         if ((dl >= 0 && (int)s_frame >= dl && (int)s_frame < dl + dl_n) || capturing() || (dlrt && b->color_va == dlrt_va)) {

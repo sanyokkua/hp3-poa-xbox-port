@@ -90,7 +90,7 @@ HP-POA (`port/PORT_CHANGES.md`), rows that carry an address:
 | Quit prompt / PC settings | `sub_00021C90`, `sub_00021D00`, `sub_00020220`, 34 traced natives | our overlay covers settings |
 | Trainer | `sub_00020310`, `sub_001ABDD0` | dev tool |
 | FOV / cutscene lens | `sub_000376E0`, `sub_000377B0`, `sub_000376B0`, `sub_000518D0` | later |
-| Every room beyond a doorway | `sub_00051DC0`, `sub_0004E710`, `sub_00051A60`, `sub_00051810` | later |
+| Every room beyond a doorway | `sub_00051DC0`, `sub_0004E710`, `sub_00051A60`, `sub_00051810` | later; not the library rug cut (its pieces are always drawn; renderer depth clamp, PORTING 1j) |
 | Level packages streamed within a frame | `sub_0022EC00` | maybe |
 | Quick step back through a doorway held | `sub_00034FF0` | game bug guard |
 | Stale material entries skipped | `sub_0003A260` (link `0xB7F2E800`) | crash guard |

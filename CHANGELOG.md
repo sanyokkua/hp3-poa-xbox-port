@@ -10,6 +10,10 @@ Version 0.0.1: the port is started; nothing runs yet.
   instead (the first version) skipped their last events and once stuck the train's dementor scene; the version after
   it left almost every cutscene unskippable. `HPPOA_CUTSCENE_FF=0` turns the fast-forward off, `HPPOA_FF_STEP` sets
   its step (100 ms a frame). Dev aids: `HPPOA_CALL_SCRIPT` (run a level script function by name), `HPPOA_FF_AUTO`.
+- Floors' rugs and patches (the library rug, the planks at the gargoyle door) no longer lose a part along a straight
+  line when the camera is right above one end: depth is clamped per pixel as on the NV2A, not per vertex, which tilted
+  long triangles reaching past the near plane (`RECOMP_MTL_ZCLAMP_PIXEL=0` keeps the old clamp). Not yet seen in a
+  scripted run; owner check pending.
 - Fixed: a mesh the camera is inside (a cutscene close-up of a face, a wall or painting at the camera) no longer fills the
   screen as a flat surface. As on the NV2A, pixels in front of the near plane are dropped when the game asks for it
   (`RECOMP_MTL_ZCULL=0` keeps the old clamp).
