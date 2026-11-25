@@ -118,6 +118,7 @@ static const char s_vs_head[] =
     "    float4 vT0; float4 vT1; float4 vT2; float4 vT3;\n"
     "    float vFog;\n"
     "    float vW;\n"                 /* w / zmax, perspective-correct: the W-buffer's depth */
+    "    float2 vZw;\n"               /* z / zmax and w, unclamped: the clip-range cull (FsU u_zcull) */
     "    float psize [[point_size, function_constant(nv2a_points)]];\n"
     "};\n"
     /* gl_vsh.c's NV2A_SNAP_GLSL and Vulkan nv2a_clip, with y negated: real
@@ -194,6 +195,7 @@ static const char s_vs_main_program[] =
     "    float3 sc = float3(s.oPos.xy * U.u_aa, s.oPos.z);\n"
     "    o.pos = nv2a_clip(U, sc * w, w);\n"
     "    o.vW = w * U.u_surf.z;\n"
+    "    o.vZw = float2(s.oPos.z * w * U.u_surf.z, w);\n"
     "    o.vD0 = clamp(s.oD0, 0.0, 1.0); o.vD1 = clamp(s.oD1, 0.0, 1.0);\n"
     "    o.vT0 = s.oT0; o.vT1 = s.oT1; o.vT2 = s.oT2; o.vT3 = s.oT3; o.vFog = nv2a_fog(U, s.oFog.x);\n"
     "    if (nv2a_points) o.psize = 1.0;\n"
@@ -213,10 +215,12 @@ static const char s_vs_main_fixed[] =
     "        sw.xy *= U.u_aa;\n"
     "        o.pos = nv2a_clip(U, sw, w);\n"
     "        o.vW = w * U.u_surf.z;\n"
+    "        o.vZw = float2(sw.z * U.u_surf.z, w);\n"
     "    } else {\n"
     "        float w = (in.v0.w > 0.0) ? 1.0 / in.v0.w : 1.0;\n"
     "        o.pos = nv2a_clip(U, in.v0.xyz * w, w);\n"
     "        o.vW = w * U.u_surf.z;\n"
+    "        o.vZw = float2(in.v0.z * w * U.u_surf.z, w);\n"
     "    }\n"
     "    o.vD0 = clamp(in.v3, 0.0, 1.0); o.vD1 = clamp(in.v4, 0.0, 1.0);\n"
     "    float4 t[4] = { in.v9, in.v10, in.v11, in.v12 };\n"
@@ -354,6 +358,7 @@ int nv2a_msl_fragment(const Nv2aPshKey *k, char *buf, size_t cap)
         "    float4 u_fogcolor;\n"
         "    int u_alpha_func; float u_alpha_ref;\n"
         "    float2 u_pad_; float4 u_bc[4]; int4 u_bm;\n"
+        "    float4 u_zcull;\n"
         "};\n"
         /* Border addressing (mode 4) with the stage's own colour: Metal's samplers only have
          * black or white borders. CoS clears its character shadow map to grey and gives it a
@@ -373,6 +378,7 @@ int nv2a_msl_fragment(const Nv2aPshKey *k, char *buf, size_t cap)
         "    float4 vT0; float4 vT1; float4 vT2; float4 vT3;\n"
         "    float vFog;\n"
         "    float vW;\n"
+        "    float2 vZw;\n"
         "};\n"
         /* The W-buffer (SET_CONTROL0 Z_PERSPECTIVE): the depth is w, not z/w (xemu's
          * z_perspective); the interpolated vW is exact w / zmax. */
@@ -409,6 +415,14 @@ int nv2a_msl_fragment(const Nv2aPshKey *k, char *buf, size_t cap)
     memcpy(o.p, body, len);
     o.p += len;
     o.left -= len;
+    /* SET_ZMIN_MAX_CONTROL CULL (xemu glsl/psh.c "Depth clipping"): a pixel whose depth is outside the
+     * clip range is dropped, as on the NV2A, not clamped onto the near or far plane. A mesh the camera is
+     * inside (a cutscene close-up, a wall at the camera) is cut away instead of filling the screen at depth 0
+     * (hppoa play test 3, issue 4). u_zcull: x on, y/z the clip range over zmax (nv2a_metal.m, RECOMP_MTL_ZCULL). */
+    emit(&o, "    if (F.u_zcull.x > 0.5 && in.vZw.y > 0.0) {\n"
+             "        float zc_ = in.vZw.x / in.vZw.y;\n"
+             "        if (zc_ < F.u_zcull.y || zc_ > F.u_zcull.z) discard_fragment();\n"
+             "    }\n");
     emit(&o, "    FOut fout_; fout_.c = fragColor;\n"
              "    if (nv2a_wdepth) fout_.d = clamp(in.vW, 0.0, 1.0);\n"
              "    return fout_;\n}\n");

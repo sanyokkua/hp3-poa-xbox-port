@@ -10,6 +10,15 @@ Version 0.0.1: the port is started; nothing runs yet.
   instead (the first version) skipped their last events and once stuck the train's dementor scene; the version after
   it left almost every cutscene unskippable. `HPPOA_CUTSCENE_FF=0` turns the fast-forward off, `HPPOA_FF_STEP` sets
   its step (100 ms a frame). Dev aids: `HPPOA_CALL_SCRIPT` (run a level script function by name), `HPPOA_FF_AUTO`.
+- Fixed: a mesh the camera is inside (a cutscene close-up of a face, a wall or painting at the camera) no longer fills the
+  screen as a flat surface. As on the NV2A, pixels in front of the near plane are dropped when the game asks for it
+  (`RECOMP_MTL_ZCULL=0` keeps the old clamp).
+- The dark shapes on floors (luggage car, dormitory stairs) are the game's own character shadows from the nearest lamp;
+  checked against xemu's NV2A rules: no change. Renderer details matched to the NV2A: stencil op 0 is ZERO
+  (`RECOMP_MTL_STENCIL_ZERO=0`), the alpha test compares 8-bit alpha (`RECOMP_ATEST_ROUND=0`), no normal flip in
+  fixed-function lighting (`RECOMP_FF_FLIP_NORMALS=1` brings it back).
+- Fixed: the game stuck in the dementor scene on the train after Start or Back. Skip Cutscenes ended cutscenes the
+  game marks unskippable, and those drive the level script; it now skips only skippable ones.
 - Fixed: characters' skin, hair and robes blinking orange in cutscenes (Malfoy, Ron on the train). The cutscene models'
   second layer is their own texture, which squared the colour; that layer now passes the colour on
   (`RECOMP_SKIN_LAYER=1` keeps it).
