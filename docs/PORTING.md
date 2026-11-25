@@ -183,10 +183,12 @@ New Game, the Hogwarts Express cutscene, the corridor, the luggage car and the F
    `0x365EA8` (`sub_000616A0`): `+0x8C` the cutscene playing, `+0x99` skippable. The Apt native SkipCutscene (`0x1FB90`,
    called when A is pressed in a cutscene) runs `sub_00061520(this, force)`, which ends a skippable or forced one with
    `sub_00062170` and sets the menu's `CutsceneSkipped`. The train's first cutscene is not skippable (A: native called,
-   nothing happens). Start or Back while `+0x8C` is set now asks for a forced skip, run on the game thread at the next
-   clock tick; the press is hidden from the game while the cutscene plays (Start would pause). Evidence (`build/t/cs3`):
-   `[cutscene] 8220EA14 skipped (skippable 0): ended` at the Start press, Harry in the corridor with the HUD 2 s later,
-   play and the pause menu work after it. `HPPOA_CUTSCENE_LOG=1` logs the manager's state and the native.
+   nothing happens). Start or Back while a skippable cutscene plays (`+0x8C` set, `+0x99` != 0) asks for the skip,
+   run on the game thread at the next clock tick; the press is hidden from the game while it plays (Start would pause).
+   Unskippable ones are never ended: the first version forced them, and play test 3 stuck in the dementor scene after
+   `[cutscene] 8220EBF4 skipped (skippable 0): ended` (inhogex_07; the next scene looped forever). Evidence of the fix
+   (`build/t/cskip`): Start and Back in the train's first cutscene reach the game's native, which refuses; the cutscene
+   plays to the end and Harry walks the corridor after it. `HPPOA_CUTSCENE_LOG=1` logs the manager's state and the native.
 
 7. **Saves work and land in the player folder (no fix needed).** Saving is off in the train (pause menu: Save Game greyed);
    it is on at Hogwarts. Dev helper `HPPOA_START_CHAPTER=<chapter>[:<room>]`: the chapter start `sub_00115390` (cdecl:
@@ -636,8 +638,8 @@ Dev scripts (inherited): `tools/stubcheck.py` (is any empty stub real code), `to
   and 60 fps; no visible effect found. HP-POA-Xbox-Recomp's loading-loop pacing is the candidate fix if one shows.
 - **60 fps**: a cutscene with a fixed clock step was not met on the route (the split is untested); lip-sync follow and the Carpe
   Retractum ledge step (HP-POA-Xbox-Recomp) not ported.
-- **Skip Cutscenes** forces the skip on cutscenes the title marks unskippable (the train's first); only that one was tested.
-  Its last subtitle line stays on screen for about a second after the skip.
+- **Skip Cutscenes** ends only cutscenes the title marks skippable (forcing unskippable ones broke the dementor scene). Its
+  last subtitle line stays on screen for about a second after the skip.
 - **Load Game screen**: the slot names showed a moment after the screen (one shot had an empty list); not checked further.
 - **NV2A lines** one host pixel wide (step 3, item 8); PoA's one line (the shadow fade mask) lands whole (1d item 1).
 - **Play test 1 open items** (1d): Malfoy's orange/blinking face (not reproduced; the dining car not reached by script). The Options "(" glyphs are fixed by a

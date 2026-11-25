@@ -389,18 +389,19 @@ static int cutscene_log(void)
     if (v < 0) { const char *e = getenv("HPPOA_CUTSCENE_LOG"); v = e && *e == '1'; }
     return v;
 }
-/* Skip Cutscenes (overlay: Tweaks, HPPOA_SKIP_CUTSCENES, on unless 0): Start or Back while a cutscene plays
- * ends it the game's own way, sub_00061520(this, force = 1) -> sub_00062170, the path the menu's SkipCutscene
- * takes for a skippable one; forced, so the ones the title marks unskippable (+0x99 = 0, the train's first) end
- * too. The press is asked for in XInputGetState and kept from the game while the cutscene plays (Start would
- * pause it); the skip itself runs on the game's thread at the next clock tick, before the frame's tasks. */
+/* Skip Cutscenes (overlay: Tweaks, HPPOA_SKIP_CUTSCENES, on unless 0): Start or Back while a skippable cutscene
+ * plays ends it the game's own way, sub_00061520(this, force = 1) -> sub_00062170, the path the menu's
+ * SkipCutscene takes. Only skippable ones (+0x99 != 0): the title's unskippable ones drive the level script, and
+ * ending one (the dementor scene, inhogex_07) left the next scene waiting forever. The press is asked for in
+ * XInputGetState and kept from the game while a skippable cutscene plays (Start would pause it); the skip itself
+ * runs on the game's thread at the next clock tick, before the frame's tasks. */
 static volatile int s_skip_req;
 static int skip_cutscenes_on(void)
 {
     const char *e = getenv("HPPOA_SKIP_CUTSCENES");
     return !(e && *e == '0');
 }
-static int cutscene_playing(void) { return MEM32(CUTSCENES + 0x8C) != 0; }
+static int cutscene_skippable(void) { return MEM32(CUTSCENES + 0x8C) != 0 && MEM8(CUTSCENES + 0x99) != 0; }
 extern void sub_00061520(void);
 static void cutscene_watch(void)
 {
@@ -412,7 +413,7 @@ static void cutscene_watch(void)
     last_cs = cs, last_sk = sk;
     if (s_skip_req) {
         s_skip_req = 0;
-        if (cs) {
+        if (cs && sk) {
             uint32_t s_esp = esp, s_eax = eax, s_ebx = ebx, s_ecx = ecx, s_edx = edx, s_esi = esi, s_edi = edi,
                      s_ebp = g_ebp;
             esp -= 4; MEM32(esp) = 1;           /* force */
@@ -820,7 +821,7 @@ void sub_002C0BA6(void)
         if (s_xi[i].port == 0) {
             static uint8_t was;
             uint8_t now = rep[2] & 0x30u;       /* Start, Back */
-            if (skip_cutscenes_on() && cutscene_playing()) {
+            if (skip_cutscenes_on() && cutscene_skippable()) {
                 if (now & ~was) s_skip_req = 1;
                 MEM16(st + 4) = rep[2] & ~0x30u;    /* kept from the game */
             }

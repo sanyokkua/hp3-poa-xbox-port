@@ -4,6 +4,8 @@
 
 Version 0.0.1: the port is started; nothing runs yet.
 
+- Fixed: the game stuck in the dementor scene on the train after Start or Back. Skip Cutscenes ended cutscenes the
+  game marks unskippable, and those drive the level script; it now skips only skippable ones.
 - Fixed: characters' skin, hair and robes blinking orange in cutscenes (Malfoy, Ron on the train). The cutscene models'
   second layer is their own texture, which squared the colour; that layer now passes the colour on
   (`RECOMP_SKIN_LAYER=1` keeps it).
