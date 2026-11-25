@@ -5,7 +5,7 @@
 #     recomp_dispatch*) or a game binary (hppoa)
 #   - a file with more than 150 distinct lifted function names (sub_XXXXXXXX; a lifted chunk has ~250-400, recomp_manual.c 37): generated code under another name
 #   - any file with the SHA-1 of a file on the disc of 64 bytes or more (game/extracted, when it is there)
-#   - two or more of 64 64-byte windows of default.xbe's executable sections (no padding windows) in one file
+#   - two or more of 1024 64-byte windows of default.xbe's executable sections (no padding windows) in one file
 #   - this Mac's home folder path (the builder's)
 # Adapted from the HP2 port's test (itself from NFSU2Deadware's, MIT).   tests/dmg_no_game_code.sh <dmg>
 set -euo pipefail
@@ -49,16 +49,17 @@ if os.path.isdir(game):
         flags, _, _, raw, size = struct.unpack_from('<IIIII', xbe, addr - base + i * 56)
         if flags & 4:                              # executable section
             code += xbe[raw:raw + size]
-    # 64 windows spread over the code, each with real content: a window of padding (HPPOA's sections hold zero runs)
-    # matches any binary and says nothing.
-    step = max(64, len(code) // 64)
+    # 1024 windows spread over the code (one every ~3 KB), each with real content: a window of padding (the sections
+    # hold zero runs) matches any binary and says nothing. 64 windows (one every ~50 KB) let a 16 KB slice of .text through.
+    NWIN = 1024
+    step = max(64, len(code) // NWIN)
     windows = []
     for start in range(0, len(code) - 64, step):
         for i in range(start, min(start + step, len(code) - 64), 16):
             if len(set(code[i:i + 64])) >= 24:
                 windows.append(code[i:i + 64])
                 break
-    windows = windows[:64]
+    windows = windows[:NWIN]
     for p in files(mnt):
         data = open(p, 'rb').read()
         if hashlib.sha1(data).hexdigest() in disc:

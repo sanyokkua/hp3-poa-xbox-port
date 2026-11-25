@@ -35,7 +35,7 @@ the installer, and keeps the same style as the other ports in this series ([Sorc
 [Chamber of Secrets](https://github.com/sanyokkua/hpcos-xbox-port), [NFS Underground 2](https://github.com/sanyokkua/nfsu2-xbox-port), [NFS Underground](https://github.com/sanyokkua/nfsu-xbox-port),
 [NFS Hot Pursuit 2](https://github.com/sanyokkua/nfs-hp2-ps2-port)).
 
-**Status:** version 0.1.0. Played from the logos and the intro movie through New Game, the Hogwarts Express (the corridor, the
+**Status:** version 0.1.1. Played from the logos and the intro movie through New Game, the Hogwarts Express (the corridor, the
 luggage car, the Flipendo tutorial, the dementor) and into Hogwarts (the Gryffindor dormitory and common room, the sixth floor,
 the library, the Defence Against the Dark Arts classroom, the Marauder's Map challenge), at 30 and 60 fps at 3x and 4x on an
 M1 Pro, with sound. Saving and loading work.
