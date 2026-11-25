@@ -32,10 +32,10 @@ fork of the Sorcerer's Stone one with SCDA-XBERecomp's D3D8 layer). Their code i
 | One lifted-code hook (a region check after `loc_00115678` of `sub_00115500`): our port does not need one yet | HP3-Recompiled | `port/tools/patch_gen.py` |
 | Engine family (EA UK, like the PS2 Chamber of Secrets), disc layout, `.big` (BIGF), `.hpb` scripts, debug menu | HP3-Recompiled | `docs/re-notes.md` |
 | No XMV section: movies are `.mad` through EA's own player | HP3-Recompiled | `docs/bringup.md` ("Title facts") |
-| DirectSound crashes on the emulated APU in PoA, so the PCs replace it by a host mixer (our port emulates the APU: check) | HP3-Recompiled | `port/PORT_CHANGES.md`, `port/src/hle_dsound.c` |
+| DirectSound crashes on the emulated APU in PoA, so the PCs replace it by a host mixer (this port emulates the APU, and it plays: `docs/PORTING.md` 1c) | HP3-Recompiled | `port/PORT_CHANGES.md`, `port/src/hle_dsound.c` |
 
 All four seeds are in `engine/config/seed_functions.json` (checked by `tools/seedcheck.py` on a lift of this disc, see
-`docs/PORTING.md` step 1a), together with 75 more from the stub audit.
+`docs/PORTING.md` step 1a), together with the ones the stub audit and `tools/immscan.py` found (94 in all at 0.1.0).
 
 The NFSU2 `engine/` was itself made from [myUdav4iik/nfsu2-ios](https://github.com/myUdav4iik/nfsu2-ios) at `85d2cbf` (branch
 `ios`; nfsu2-sw v0.5.13 by antoxa2584x with the Apple host and the Metal renderer) with the patches in this folder, applied in
