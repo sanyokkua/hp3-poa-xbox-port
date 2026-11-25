@@ -507,12 +507,15 @@ static void move_log(uint32_t clk, uint32_t before)
 }
 
 /* Dev: HPPOA_POKE8="<hex va>=<value>,...": bytes written every game tick (the title's tuning switches, e.g. NoClip
- * 0x36A93C, DebugMove 0x36AC30; HP-POA-Xbox-Recomp's trainer_vars.h, MIT, facts only). For scripted routes. */
+ * 0x36A93C, DebugMove 0x36AC30; HP-POA-Xbox-Recomp's trainer_vars.h, MIT, facts only). For scripted routes.
+ * HPPOA_POKE8_AT=<ms>: only from that many ms of wall time after the first game tick (e.g. TimeFactor 0x3676D8 =
+ * 0.0 freezes a scene for A/B shots of one frame). */
 static void dev_poke(void)
 {
-    static int n = -1; static uint32_t va[16]; static uint8_t val[16];
+    static int n = -1; static uint32_t va[16]; static uint8_t val[16]; static uint64_t at;
     if (n < 0) {
         const char *e = getenv("HPPOA_POKE8");
+        if (getenv("HPPOA_POKE8_AT")) at = mono_ms() + strtoull(getenv("HPPOA_POKE8_AT"), NULL, 10);
         n = 0;
         while (e && *e && n < 16) {
             char *q;
@@ -522,7 +525,10 @@ static void dev_poke(void)
             e = *q == ',' ? q + 1 : q;
         }
     }
-    for (int i = 0; i < n; i++) MEM8(va[i]) = val[i];
+    if (!at || mono_ms() >= at) {
+        if (at && n) { fprintf(stderr, "[dev] pokes on\n"); at = 0; }
+        for (int i = 0; i < n; i++) MEM8(va[i]) = val[i];
+    }
     /* HPPOA_SETPOS="<game ms>,x,y,z": once the game clock passes that time, the player is put at x y z (player
      * +0x4EC, as HPPOA_MOVE_LOG prints it): a scripted route's start that does not depend on the camera */
     {

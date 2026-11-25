@@ -2847,6 +2847,31 @@ static DynState s_dyn;
 static uint32_t zmax_of(const uint32_t *r);
 static int s_zb_seen, s_wd_seen;
 
+/* hppoa play test 3 (the library rug and a plank patch cut along straight edges): depth is clamped per
+ * pixel (MTLDepthClipModeClamp), not per vertex (nv2a_metal_msl.c nv2a_clip). RECOMP_MTL_ZCLAMP_PIXEL=0
+ * clamps each vertex's z to [0, w] as before; =0ab alternates the two every 2 s of wall time (A/B shots
+ * of the same frozen frame). */
+static int zclamp_vertex(void)
+{
+    static int mode = -1;
+    if (mode < 0) {
+        const char *e = getenv("RECOMP_MTL_ZCLAMP_PIXEL");
+        mode = !e || *e != '0' ? 0 : e[1] ? 2 : 1;
+        fprintf(stderr, "[mtl] depth clamped per %s\n", mode == 0 ? "pixel" : mode == 1 ? "vertex (RECOMP_MTL_ZCLAMP_PIXEL=0)"
+                                                         : "vertex/pixel, 2 s each (A/B)");
+    }
+    if (mode == 2) {
+        static uint64_t t0;
+        uint64_t now = clock_gettime_nsec_np(CLOCK_MONOTONIC) / 1000000ull;
+        if (!t0) t0 = now;
+        int v = ((now - t0) / 2000u) % 2 == 0;
+        static int last = -1;
+        if (v != last) { fprintf(stderr, "[mtl] depth clamp now per %s\n", v ? "vertex" : "pixel"); last = v; }
+        return v;
+    }
+    return mode;
+}
+
 /* Returns 0 when the draw shows nothing (front-and-back culled triangles:
  * Metal has no such cull mode). */
 static int apply_dynamic(const uint32_t *r, int has_depth, uint32_t cls, float slope_k)
@@ -3569,6 +3594,31 @@ static void mtl_draw_raw_inner(const Nv2aRawBatch *b)
                 fprintf(stderr, "[capture] done\n");
         }
         fidx++;
+        {   /* hppoa dev: RECOMP_MTL_ZCLAMP_LOG=1 lists the fixed-function triangle draws with a vertex between the eye
+             * and the near plane (0 < w, z < 0) or past the far plane (z > zmax w): the ones a per-vertex depth clamp
+             * bends (nv2a_metal_msl.c nv2a_clip) */
+            static int zl = -1;
+            if (zl < 0) { const char *e = getenv("RECOMP_MTL_ZCLAMP_LOG"); zl = e && *e == '1'; }
+            if (zl && b->xform == 1 && cls == 2 && (b->attr_direct & 1u)) {
+                uint32_t v, nn = 0, nf = 0;
+                float zmax = (float)zmax_of(r), lo[3] = { 1e30f, 1e30f, 1e30f }, hi[3] = { -1e30f, -1e30f, -1e30f };
+                for (v = 0; v < b->vertex_count; v++) {
+                    float p[4], z, w;
+                    attr_to_float4(b, 0, v, p);
+                    for (int c = 0; c < 3; c++) { if (p[c] < lo[c]) lo[c] = p[c]; if (p[c] > hi[c]) hi[c] = p[c]; }
+                    z = b->composite[8] * p[0] + b->composite[9] * p[1] + b->composite[10] * p[2] + b->composite[11] * p[3];
+                    w = b->composite[12] * p[0] + b->composite[13] * p[1] + b->composite[14] * p[2] + b->composite[15] * p[3];
+                    if (w > 0.0f && z < 0.0f) nn++;
+                    else if (w > 0.0f && z > zmax * w) nf++;
+                }
+                if (nn || nf)
+                    fprintf(stderr, "[zc] f%u #%u n %u verts %u tex %08X zwrite %u bias %u zminmax %08X clip %08X %08X: %u near, %u far\n",
+                            s_frame, fidx, n, b->vertex_count, b->tex_va[0], r[0x35C / 4], r[0x338 / 4], r[0x1D78 / 4],
+                            r[0x394 / 4], r[0x398 / 4], nn, nf);
+                if (nn || nf)
+                    fprintf(stderr, "[zc]   box %.0f..%.0f %.0f..%.0f %.0f..%.0f\n", lo[0], hi[0], lo[1], hi[1], lo[2], hi[2]);
+            }
+        }
         static int dlrt = -1; static uint32_t dlrt_va;   /* hppoa: RECOMP_DL_RT=<va>: every draw into that target */
         if (dlrt < 0) { const char *e = getenv("RECOMP_DL_RT"); dlrt = e != NULL; if (e) dlrt_va = (uint32_t)strtoul(e, NULL, 16); }
         if ((dl >= 0 && (int)s_frame >= dl && (int)s_frame < dl + dl_n) || capturing() || (dlrt && b->color_va == dlrt_va)) {
@@ -3581,6 +3631,10 @@ static void mtl_draw_raw_inner(const Nv2aRawBatch *b)
                     fprintf(stderr, " | s%u %08X f%02X", k, b->tex_va[k], (r[base + 1] >> 8) & 0xFF);
             }
             fprintf(stderr, " | light %u spec %u", r[0x314 / 4], r[0x3B8 / 4]);
+            if (b->xform == 1)   /* hppoa: the composite's z and w rows (a decal's z-biased projection) */
+                fprintf(stderr, " | zb %u zmm %X | mz %.6g %.6g %.6g %.6g mw %.6g %.6g %.6g %.6g vpz %.6g", r[0x338 / 4], r[0x1D78 / 4], b->composite[8],
+                        b->composite[9], b->composite[10], b->composite[11], b->composite[12], b->composite[13],
+                        b->composite[14], b->composite[15], b->vp_offset[2]);
             /* What makes a draw vanish: target, blend, colour mask, alpha test, and
              * vertex 0's position and colour (attribute 0 and 3). */
             fprintf(stderr, " | rt %08X bl %u %X %X %X cm %08X at %u %X %u",
@@ -3872,6 +3926,7 @@ static void mtl_draw_raw_inner(const Nv2aRawBatch *b)
         vb.fog[0] = r[0x2A4 / 4] != 0;
         vb.fog[1] = (int32_t)r[0x29C / 4];
         vb.fog[2] = (int32_t)r[0x2A0 / 4];
+        vb.fog[3] = zclamp_vertex();   /* nv2a_clip: the old per-vertex depth clamp */
         memcpy(vb.fogp, &r[0x9C0 / 4], 2 * sizeof(float));
         memcpy(vb.fogplane, &r[0x9D0 / 4], sizeof vb.fogplane);
         {

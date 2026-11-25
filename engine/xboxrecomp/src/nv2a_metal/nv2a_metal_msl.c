@@ -142,8 +142,13 @@ static const char s_vs_head[] =
     "static float4 nv2a_clip(constant VsU& U, float3 sw, float w) {\n"
     "    float z = sw.z * U.u_surf.z;\n"
     "    sw.xy = nv2a_snap(U, sw.xy, w);\n"
+    /* Depth is clamped per pixel (the encoder's MTLDepthClipModeClamp), as on the NV2A and in
+     * xemu (depth clamp, glsl/psh.c clipRange), never per vertex: clamping one vertex of a triangle
+     * that crosses the near or far plane tilts the depth of the whole triangle, and coplanar meshes
+     * with other vertices (a rug on a floor) then cut each other along triangle edges (hppoa play
+     * test 3). u_fog.w != 0 (RECOMP_MTL_ZCLAMP_PIXEL=0) brings the old vertex clamp back. */
     "    return float4(sw.x * U.u_surf.x - w, w - sw.y * U.u_surf.y,\n"
-    "                  w > 0.0 ? clamp(z, 0.0, w) : z, w);\n"
+    "                  (U.u_fog.w != 0 && w > 0.0) ? clamp(z, 0.0, w) : z, w);\n"
     "}\n";
 
 /* The register file and ILU helpers of gl_vsh.c's prelude, as members. */
