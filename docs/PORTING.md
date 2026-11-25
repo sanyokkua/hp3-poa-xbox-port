@@ -666,3 +666,9 @@ Dev scripts (inherited): `tools/stubcheck.py` (is any empty stub real code), `to
   (`HPPOA_WARP=30:0`).
 - **SDL from two threads.** sdl2-compat's pad list (`SDL_NumJoysticks`) has no lock. Only the thread that pumps SDL's events
   may open, close or enumerate pads; other threads read open ones.
+
+### 1g addendum: P8 hash applied (b010ad5)
+The `p8_texture_hash.patch` from 1g is applied on main as b010ad5 (`bytes_hash_all` for P8 textures, w*h bytes). Verified:
+`build/t/subfix` (train script, 60 fps, shots 76-96 s) shows every line whole and centred: "Blimey!...", "Imagine it...",
+"Crookshanks! No!", "Can't you keep that monster...", "You don't want to wake up Professor Lupin...", "I'll help you
+find Scabbers". 0 ICALL misses.
