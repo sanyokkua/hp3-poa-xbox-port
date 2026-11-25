@@ -12,7 +12,7 @@ while IFS= read -r f; do
   case "$f" in
     engine/xboxrecomp/tools/conformance/test.xbe) ;;   # xboxrecomp's 4 KB synthetic test image (its mkxbe.py), no game code
     upstream/*|engine/gen/*|mirror/*|game/*|build/*|logs/*|.venv/*) bad "not ours to publish: $f" ;;
-    *.iso|*.ISO|*.xbe|*.XBE|*.BIN|*.xmv|*.hog|*.pkg|*.pkgA|*.hpb|*.mpf|*.sdt|*.bundle|*.dmg) bad "a game or binary file: $f" ;;
+    *.iso|*.ISO|*.xbe|*.XBE|*.BIN|*.xmv|*.hog|*.pkg|*.pkgA|*.hpb|*.mpf|*.sdt|*.mus|*.big|*.mad|*.ids|*.loc|*.pfr|*.xfn|*.btf|*.bundle|*.dmg) bad "a game or binary file: $f" ;;
     *recomp_[0-9][0-9][0-9][0-9].c|*recomp_dispatch.c|*recomp_stubs*.c) bad "generated code: $f" ;;
   esac
   [ -f "$f" ] || continue
