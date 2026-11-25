@@ -250,7 +250,7 @@ frame, for scripted runs), and `[dl]` prints stage 0's texture coordinates (`uv0
      plus closing row) matches HP3-Recompiled's note that the console's mask has the line in its last row.
    - Line width: the mask target is stored at 1x vertically (`offscreen_scale` keeps targets under 512x384 at 1x), so the
      one-pixel Metal line fills the console row here. Lines into upscaled targets are still one host pixel wide.
-2. **Malfoy's face and hair blink orange in the dining car cutscene (open).** Not reproduced: the cutscene follows the
+2. **Malfoy's face and hair blink orange in the dining car cutscene (fixed narrowly in play test 2, item 5).** Not reproduced: the cutscene follows the
    Malfoy fight, which the scripted route does not reach (`HPPOA_START_CHAPTER=0:41/43/44` hang on the loading screen). The
    train's first cutscene (`capture` at 80/86/92 s) has no character draw whose stage 1 texture is stage 0's (the pattern
    HP-POA-Xbox-Recomp's `NoSecondSkinPass` removes); its characters use stage 1 for the window light (`0x819FB400`,
@@ -338,6 +338,45 @@ frame, for scripted runs), and `[dl]` prints stage 0's texture coordinates (`uv0
      separate texture (`comb 00000002`). Next: the box puzzle by script (or the dining car's coordinates, e.g. from
      `[move]` on a real play), then `capture` on the "Smiling on the other side of your face" shot.
 
+
+5. **Play test 2 (60 fps, `build/t/pt2/play2_partial.log`, owner screenshots 4-6, 13-19, recording 10.00.03).**
+   - **Skin blinking orange in cutscenes (Malfoy's face and hair, Ron in "You asked for it, Malfoy!"): fixed narrowly.**
+     Symptom: faces, hands, hair and robes of some characters flip between a normal and an orange, over-saturated look
+     (robes darker). The recording measured at 60 fps on Malfoy's face (141-144 s): orange (RGB ~210,134,86) for 8-9
+     frames, normal (~186,126,88) for 2-3, repeating, so orange is the usual state and normal the blink.
+     Captures (28 F12 frames in inhogex_04): the characters in question are drawn with attributes `060D` (a second UV
+     set) and stage 1 = stage 0's own image (`s1` = `s0`, same format, no texgen, no matrix); combiner (from the owner's
+     `progcache.bin`): stage 0 `t0 x v0 x2`, stage 1 `t1 x r0 x2` (`color_icw 090C0000`, `ocw 00010C00`): base x base x
+     light x 4. Game side: the two-layer material `sub_0004C110` sets stage 0 = layer `+0xC` (or the override's), stage 1 =
+     layer `+8`, `COLOROP MODULATE2X` (`0x275C00` = 5), `TEXCOORDINDEX` 0 (`0x4C23D`); its multipass twin `sub_0004BFE0`
+     draws layer `+8` with blend `DST_COLOR, ZERO`: same product. The cutscene models carry the base texture in both
+     layers, so the square is in the title's data and the XDK D3D: the push buffer the NV2A gets is the one we execute.
+     Not proven what the console shows; HP-POA-Xbox-Recomp saw the same at the D3D level and takes the pass out
+     (`NoSecondSkinPass`, "characters as in play"). Root cause of the alternation not found (which frames take that
+     material; not reproduced: the dining car cutscene still needs the box puzzle, a `HPPOA_SETPOS` jump into the car,
+     `build/t/DC1`, does not trigger it).
+   - Fix (`nv2a_metal.m`, `skin_second_layer`): a later combiner stage whose RGB is `t_s x r0 x 2` (C, D zero, sum to
+     r0), stage s sampling stage 0's image through the same program from the same coordinates (attribute 9+s equal to 9,
+     no texgen, no texture matrix) passes r0 on (A = r0, B = 1, no scale; alpha `t_s.a x r0.a` likewise). Logs `[skin]`
+     (first 4). `RECOMP_SKIN_LAYER=1` keeps the title's colour. Evidence: train route with the book fight
+     (`build/t/SK1`): no `[skin]` line (no other draw matches). Owner check: replay the dining car cutscene; the log
+     should show `[skin] stage 1 ...` and the faces should stay as in the 2-3 "normal" frames.
+   - **Library rug gone near the camera (screenshots 16/17): likely fixed, not reproduced.** No capture of it; the draw
+     log of the dormitory shows the title's polygon offset (`SET_POLYGON_OFFSET` scale -0.25, bias -1, fill enable) does
+     reach `setDepthBias`, no W-buffer in PoA. Found: Metal's slope term is per pixel of the target, the NV2A's per pixel
+     of the title's surface; at render scale 4 the slope part was a quarter of the console's, the part that matters on
+     a floor near the camera. The cut on the rug is a straight line, as two coplanar meshes' depth difference is. Fix:
+     the factor times target pixels / title pixels (`apply_dynamic`, `slope_k`); `RECOMP_MTL_ZSLOPE=0` off. The log line
+     now reads `polygon offset in use (scale -1.000, bias -1.0; target scale 4.00)`. Dormitory A/B (`build/t/TG0` off,
+     `TG1` on): no visible change. Owner check: the library fight; if the rug still drops, F12 there.
+   - **`[mtl] texgen 8512 on stage 0 coord 0 not generated`: done.** 0x8512 is `GL_REFLECTION_MAP` (D3D
+     `TCI_CAMERASPACEREFLECTIONVECTOR`); 0x8511 normal map, 0x2402 sphere map. In the dormitory a 15-vertex blended draw
+     (`816E4980`, attributes position + normal only, texture matrix on: an env sheen) used it on S, T, R; the Metal
+     fixed-function shader left its coordinates as the constant texcoord (one texel). Now generated in the vertex shader
+     (eye-space normal from the model-view 3x3, r = u - 2(n.u)n, sphere map from r), then the texture matrix;
+     `RECOMP_MTL_TEXGEN_MAPS=0` off. Shader test (`tests/nv2a_metal_msl`, with the owner's `progcache.bin`): 459
+     program pairs, 0 failures. Dormitory shots off/on (`build/t/evidence/dorm_texgen_reflection_off_on_diff.png`):
+     a few pixels differ, nothing else.
 
 ## 1f. Play test 1: gameplay fixes (2026-11-24, `.wt/PLAYTEST1.md`)
 
@@ -521,6 +560,13 @@ Not applied to the other repos (rule: an engine fix found in one Xbox port goes 
 9. **`tools/difftest.py`: low 64 KB mapped, `DIFF_BREAK`** (1d item 4). The copy in hpcos-xbox-port stops at the first SEH
    prologue (`mov eax, fs:[0]` reads address 0 in Unicorn's 32-bit mode); copy the mapping there and to any port that has
    the tool.
+
+10. **Metal: polygon offset slope scaled by the render scale** (`nv2a_metal.m`, `apply_dynamic`'s `slope_k`; 1d item 5).
+    Every port renders upscaled with the same backend, so every decal with a slope-scaled offset got 1/scale of it.
+11. **Metal: sphere, normal and reflection map texgen** (`nv2a_metal_msl.c` fixed-function vertex shader; 1d item 5).
+    Any port that logs `texgen 8512/8511/2402 ... not generated` (NFSU2 car reflections?) gets them.
+12. **Not to backport as is: the skin second-layer pass-through** (`skin_second_layer`) is PoA's data; the matcher is narrow
+    but other titles may draw a texture over itself by modulate 2x on purpose.
 
 ## 2. Tools
 

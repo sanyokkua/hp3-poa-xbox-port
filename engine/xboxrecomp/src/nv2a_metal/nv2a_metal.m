@@ -2831,7 +2831,7 @@ static int s_zb_seen, s_wd_seen;
 
 /* Returns 0 when the draw shows nothing (front-and-back culled triangles:
  * Metal has no such cull mode). */
-static int apply_dynamic(const uint32_t *r, int has_depth, uint32_t cls)
+static int apply_dynamic(const uint32_t *r, int has_depth, uint32_t cls, float slope_k)
 {
     DynState d;
     memset(&d, 0, sizeof d);
@@ -2862,6 +2862,20 @@ static int apply_dynamic(const uint32_t *r, int has_depth, uint32_t cls)
             d.zb_on = 1;
             d.zb_scale = r[0x384 / 4];
             d.zb_bias = r[0x388 / 4];
+            /* hppoa (play test 2, the library rug gone near the camera in a fight): Metal's slope
+             * term is per pixel of the target, the NV2A's per pixel of the title's surface; at a
+             * render scale of k the target's slope is k times smaller, so the factor is k times
+             * larger. RECOMP_MTL_ZSLOPE=0 keeps the factor as the title set it. */
+            {
+                static int zs = -1;
+                if (zs < 0) { const char *e = getenv("RECOMP_MTL_ZSLOPE"); zs = !(e && *e == '0'); }
+                if (zs && slope_k > 1.0f) {
+                    float a;
+                    memcpy(&a, &d.zb_scale, 4);
+                    a *= slope_k;
+                    memcpy(&d.zb_scale, &a, 4);
+                }
+            }
             if (zmax_of(r) == 0xFFFFu) {
                 float b;
                 memcpy(&b, &d.zb_bias, 4);
@@ -2872,7 +2886,7 @@ static int apply_dynamic(const uint32_t *r, int has_depth, uint32_t cls)
                 float a, b;
                 memcpy(&a, &d.zb_scale, 4);
                 memcpy(&b, &d.zb_bias, 4);
-                fprintf(stderr, "[mtl] polygon offset in use (scale %.3f, bias %.1f)\n", a, b);
+                fprintf(stderr, "[mtl] polygon offset in use (scale %.3f, bias %.1f; target scale %.2f)\n", a, b, slope_k);
                 s_zb_seen = 1;
             }
         }
@@ -3397,6 +3411,78 @@ static int pend_append(const Nv2aRawBatch *b, int changed)
     return 1;
 }
 
+/* hppoa: the characters' second layer of their own texture (play test 2, Malfoy's and Ron's
+ * faces, hair and robes blinking orange in the train cutscenes). The title's two-layer material
+ * (sub_0004C110, multipass twin sub_0004BFE0) draws layer +0xC on stage 0 and layer +8 on stage 1,
+ * MODULATE2X, texture coordinate index 0. The cutscene models (two UV sets) carry the base
+ * texture in both layers, so the colour is base x base x light x 4: the skin squared, orange,
+ * the robes darker. Which frames take that material varies (draw order / the material path
+ * chosen), so at 60 fps the face blinked (recording: 8-9 orange frames, 2-3 normal ones).
+ * The pass is recognised at the register level: a later combiner stage whose RGB is
+ * t_s x r0 x 2 (C, D zero), stage s sampling the same image as stage 0, through the same
+ * 2D program, from the same coordinates (no texgen, no texture matrix). That stage passes r0
+ * on unchanged (A = r0, B = 1, no scale; alpha likewise when it is t_s.a x r0.a), as
+ * HP-POA-Xbox-Recomp's NoSecondSkinPass does (characters as in play). RECOMP_SKIN_LAYER=1
+ * keeps the title's colour. */
+static int same_coords(const Nv2aRawBatch *b, uint32_t a0, uint32_t a1)
+{
+    uint32_t v, n = b->vertex_count < 3 ? b->vertex_count : 3;
+    int d0 = (b->attr_direct >> a0) & 1, d1 = (b->attr_direct >> a1) & 1;
+    if (!(b->attr_present & (1u << a1)))
+        return 1;                       /* no array: stage s reads its constant, not set */
+    if (d0 && d1 && b->direct[a0].ptr == b->direct[a1].ptr && b->direct[a0].type == b->direct[a1].type)
+        return 1;
+    for (v = 0; v < n; v++) {
+        float p[4], q[4];
+        if (d0) attr_to_float4(b, a0, v, p); else if (b->attrs) memcpy(p, b->attrs + v * 64 + a0 * 4, sizeof p); else return 0;
+        if (d1) attr_to_float4(b, a1, v, q); else if (b->attrs) memcpy(q, b->attrs + v * 64 + a1 * 4, sizeof q); else return 0;
+        if (p[0] != q[0] || p[1] != q[1])
+            return 0;
+    }
+    return 1;
+}
+
+static void skin_second_layer(const Nv2aRawBatch *b, const uint32_t *r, Nv2aPshKey *k)
+{
+    static int on = -1;
+    uint32_t n = k->control & 0xFF, s;
+    if (on < 0) { const char *e = getenv("RECOMP_SKIN_LAYER"); on = !(e && *e == '1'); }
+    if (!on || b->xform != 1 || !b->tex_va[0] || n < 2)
+        return;
+    for (s = 1; s < n && s < 4; s++) {
+        uint32_t ts = 8 + s, ci = k->color_icw[s], co = k->color_ocw[s], ai = k->alpha_icw[s];
+        uint32_t a = ci >> 24, bb = (ci >> 16) & 0xFF, g, c;
+        if (b->tex_va[s] != b->tex_va[0])
+            continue;
+        if (((k->shader_program >> (5 * s)) & 0x1F) != (k->shader_program & 0x1F))
+            continue;
+        if (!((a == ts && bb == 0x0C) || (a == 0x0C && bb == ts)) || (ci & 0xFFFF))
+            continue;
+        /* sum -> r0, AB and CD to discard, no dot products or mux, x2 */
+        if ((co & 0x7FFFF) != ((2u << 15) | (0xCu << 8)))
+            continue;
+        if (r[(0x420 + s * 4) / 4])
+            continue;                   /* texture matrix */
+        for (g = 0, c = 0; c < 4; c++)
+            g |= r[(0x3C0 + s * 16 + c * 4) / 4];
+        if (g || !same_coords(b, 9, 9 + s))
+            continue;
+        k->color_icw[s] = (0x0Cu << 24) | (0x20u << 16);
+        k->color_ocw[s] = co & ~(7u << 15);
+        if ((ai >> 24) == (0x10 | ts) && ((ai >> 16) & 0xFF) == 0x1C && !(ai & 0xFFFF))
+            k->alpha_icw[s] = (0x1Cu << 24) | (0x20u << 16);
+        else if ((ai >> 24) == 0x1C && ((ai >> 16) & 0xFF) == (0x10 | ts) && !(ai & 0xFFFF))
+            k->alpha_icw[s] = (0x1Cu << 24) | (0x20u << 16);
+        {
+            static unsigned told;
+            if (told++ < 4)
+                fprintf(stderr, "[skin] stage %u: second layer of stage 0's own texture %08X passed through "
+                        "(was %08X %08X)\n", s, b->tex_va[0], ci, co);
+        }
+        return;
+    }
+}
+
 /* ── Back end entry points ────────────────────────────────────────── */
 
 extern volatile int nv2a_mtl_turbo;
@@ -3636,6 +3722,7 @@ static void mtl_draw_raw_inner(const Nv2aRawBatch *b)
         return;
     s_drew_any = 1;
     psh_key(r, &pk);
+    skin_second_layer(b, r, &pk);
     p = prog_get(b, &pk);
     if (!p)
         return;
@@ -3739,7 +3826,7 @@ static void mtl_draw_raw_inner(const Nv2aRawBatch *b)
     s_pd_draw = 0;
     if (dp && s_pd_idx >= 0 && (r[0x30C / 4] || r[0x35C / 4] || r[0x32C / 4]))
         s_pd[s_frame & 1][s_pd_idx].used = 1;
-    if (!apply_dynamic(r, dp != NULL, cls))
+    if (!apply_dynamic(r, dp != NULL, cls, s->w ? (float)s->pw / (float)s->w : 1.0f))
         return;
     s->gen++;
     if (pipe != s_cur_pipe) {
@@ -3786,8 +3873,13 @@ static void mtl_draw_raw_inner(const Nv2aRawBatch *b)
             for (k = 0; k < 4; k++) {
                 for (c = 0; c < 4; c++) {
                     uint32_t g = r[(0x3C0 + k * 16 + c * 4) / 4];
-                    vb.tg[k][c] = (g == 0x2400 || g == 0x2401) ? (int32_t)g : 0;
-                    if (g && g != 0x2400 && g != 0x2401) {   /* sphere/normal/reflection map: not generated */
+                    int known = g == 0x2400 || g == 0x2401 || g == 0x2402 || g == 0x8511 || g == 0x8512;
+                    static int maps = -1;       /* RECOMP_MTL_TEXGEN_MAPS=0: sphere/normal/reflection not generated */
+                    if (maps < 0) { const char *e = getenv("RECOMP_MTL_TEXGEN_MAPS"); maps = !(e && *e == '0'); }
+                    if (known && (g == 0x2402 || g == 0x8511 || g == 0x8512) && (!maps || !(b->attr_present & 4u)))
+                        known = 0;                      /* off, or no normals: keep the coordinates */
+                    vb.tg[k][c] = known ? (int32_t)g : 0;
+                    if (g && !known) {   /* object/eye-linear, sphere, normal, reflection map handled; others not */
                         static uint32_t seen[8]; static int ns;
                         int s2, have = 0;
                         for (s2 = 0; s2 < ns; s2++) have |= seen[s2] == (g | (uint32_t)k << 28);

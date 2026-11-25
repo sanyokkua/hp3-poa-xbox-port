@@ -4,6 +4,13 @@
 
 Version 0.0.1: the port is started; nothing runs yet.
 
+- Fixed: characters' skin, hair and robes blinking orange in cutscenes (Malfoy, Ron on the train). The cutscene models'
+  second layer is their own texture, which squared the colour; that layer now passes the colour on
+  (`RECOMP_SKIN_LAYER=1` keeps it).
+- Decals drawn with a polygon offset (the library rug) get the console's slope offset when the picture is upscaled
+  (`RECOMP_MTL_ZSLOPE=0` keeps the old one).
+- Reflection, normal and sphere map texture coordinates are generated (the dormitory's sheen used one texel)
+  (`RECOMP_MTL_TEXGEN_MAPS=0` off).
 - Play test 1, round 2: the faint or missing floor shadow after the shadow fade-mask fix is what the game computes (mask,
   texture matrix and its builder checked; xemu shows no floor shadow either): no change. Dev aids for the draw log
   (`RECOMP_SURF_TRACE`, `RECOMP_DL_TEXGEN`, `RECOMP_DL_RT`, `RECOMP_DUMP_ALPHA`) and for the game's side (`HPPOA_TM_LOG`,
