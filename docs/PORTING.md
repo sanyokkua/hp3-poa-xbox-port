@@ -7,7 +7,7 @@ Sorcerer's Stone port's tree ([hp1-xbox-port](https://github.com/sanyokkua/hp1-x
 shared with those games. Per the HP3-Recompiled notes, this game is **EA UK's engine** (the same family as the PS2 Chamber of
 Secrets), not Eurocom's (CoS) and not Warthog's (HP1).
 
-Status: **step 3 done: boots to the train level (Flipendo tutorial) with sound (music, speech, effects measured), the game clock at console speed (30 fps), a 60 fps option, Skip Logo Movies and Skip Cutscenes (overlay rows). Saves and later levels not tried yet.**
+Status: **0.1.0 (2026-11-25), the first release.** Plays from the logos through the train into Hogwarts (dormitory, sixth floor, library, Defence Against the Dark Arts, the Marauder's Map challenge) at 30 and 60 fps with sound, saves and loads; the owner's play test 4 found no issues. Release checks: section 4.
 
 ## Sources (pinned)
 
@@ -46,8 +46,8 @@ Both references are cloned (shallow) into the gitignored `upstream/` and never c
 9. Comments in `engine/xboxrecomp/` still say `hpcos-xbox-port` or `CoS` where they record where a fix came from; they are history,
    not game code, and were left.
 
-TODO HP3 icon: `mac/make_icon.sh` and the installer still build the icon from the disc's title image as for CoS; check that
-this game's `$$XTIMAGE` / title image gives a good one, or draw one.
+Icon: `mac/make_icon.sh` builds it from the disc's title image as for CoS; for this disc it is Harry, Ron and Hermione on the
+menu's green background (checked in the 0.1.0 clean install).
 
 ## 1a. Step 1: seeds, lift, build, first boot (done)
 
@@ -820,6 +820,28 @@ Dev scripts (inherited): `tools/stubcheck.py` (is any empty stub real code), `to
 - **Rumble**: XInputSetState goes to the host pad; not tested with a real pad.
 - Run it: `tools/play_dev.sh` (own HOME in `build/play`). Scripted: `RECOMP_PAD_SCRIPT="10000:start:200,..." tools/run_test.sh <name> <secs> <shots>`
   then `tools/sheet.sh build/t/<name>`.
+
+## 4. Release 0.1.0 (2026-11-25)
+
+After the owner's play test 4 (no issues), at `0961689` plus the release commits. Evidence in the gitignored
+`build/rel_evidence/`.
+
+- Kit audit: every installer/app name, `HPPOA_*` variable, player folder, bundle id (`io.github.sanyokkua.hppoa`,
+  `.installer`), DMG name and disc pattern is this game's; no `hpcos`/`HPCOS`/`xmv` left in `installer/`, `mac/`, `tools/`,
+  `tests/`. `tools/publish_check.sh` now also knows `.mus .big .mad .ids .loc .pfr .xfn .btf`.
+- `tools/smoke.sh`: OK, 75 s, last frame mean 75, overlay opened and closed (`smoke.txt`).
+- `tools/make_dmg.sh`: `Harry-Potter-Prisoner-of-Azkaban-0.1.0.dmg`, 5,286,649 bytes; `tests/dmg_no_game_code.sh` PASS
+  (2,899 disc files, 64 code windows, 3,069 KB of executable sections). Negative check: a DMG with 256 KB from the middle of
+  `.text` fails (`6 windows of the program's code`, exit 1; `dmg_negative.txt`).
+- Clean install from the mounted DMG, throwaway HOME, `HPPOA_NO_UI=1 HPPOA_IMPORT_ISO=<the USA iso> HPPOA_INSTALL_DIR=<tmp>`:
+  **3 min 13 s** on the M1 Pro (import 3,228 entries, 1,947.7 MiB, "pristine .text"; lift; build; icon; app). The
+  installed app run from its player folder with a real controller connected (`[apple] controller added`, `controller ports
+  now 1`): title, Load Game, the owner's `SaveGame-1` copy (sixth floor), the library walk, spells, 165 s, clean exit, no
+  ICALL miss (`installed_play.log`, `installed_play_sheet.png`).
+- Screenshots (`docs/screenshots/`, 33-101 KB): scripted runs with `tools/run_test.sh` and the overlay's shot script. The
+  shot is the stretched drawable (2560x1440 in a window) whatever Picture says, so the game shots are resampled to 1280x960
+  (4:3) and the settings shot kept at 1280x720. The library route (`lib_route5`) only works at 30 fps and with the logos: at
+  60 fps the same pad times walk Harry up to the seventh floor.
 
 ## Pitfalls (each cost a run)
 
