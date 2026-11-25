@@ -823,6 +823,12 @@ Dev scripts (inherited): `tools/stubcheck.py` (is any empty stub real code), `to
 
 ## 4. Release 0.1.0 (2026-11-25)
 
+Published 2026-11-25 at https://github.com/sanyokkua/hp3-poa-xbox-port/releases/tag/v0.1.0. The repository name differs
+from the name the kit was prepared with, so the links (README, `docs/dmg/read-me-first.txt`, `tools/make_dmg.sh`'s
+SOURCE.txt) were fixed and the DMG rebuilt at `8b80daf` before publishing: SHA-256
+`2a440bfd5d0b51b92cf93f28b5d21de4f3901e6500b5d90176a58fd5feeb0f16`; `dmg_no_game_code` and `publish_check` passed again,
+and the downloaded asset passed `shasum -c`. The clean install below was done on the first build (only link text changed).
+
 After the owner's play test 4 (no issues), at `0961689` plus the release commits. Evidence in the gitignored
 `build/rel_evidence/`.
 
