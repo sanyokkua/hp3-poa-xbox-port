@@ -497,6 +497,71 @@ frame, for scripted runs), and `[dl]` prints stage 0's texture coordinates (`uv0
    - Not changed: the renderer (compiles, GPU load) is outside this branch, and the remaining single-frame hitches are
      the game's own synchronous loads. Before/after numbers: none (no change made).
 
+## 1h. Play test 3: floor blotches (issue 3) and the flat close-up (issue 4)
+
+Owner's play test 3 (`.wt/PLAYTEST3.md`, recording 13.49.25). Places found by matching the images to the recording
+(1 fps frames, grey 64x41, least absolute difference): images 20, 28, 29 = 5:31-5:32, the frozen luggage car **before**
+Effects was set to AO (about 6:45); images 26, 27 = 7:37, the boys' dormitory stairs in Gryffindor Tower (not the sixth
+floor); image 30 = 11:38, the library; image 31 = 14:07, the Fred and George cutscene.
+
+1. **The blotches are the game's projected character shadows (no change).**
+   - The owner's frames around 7:37 (`build/t/evidence/pt3_owner_dormstairs_shadow_is_harry.png`) show the blotch as
+     Harry's own silhouette (head, arms, robe) thrown sideways from the wall lamp; it moves with him and is cut where the
+     game stops drawing a receiver mesh. In the luggage car (5:32) the same shadows lie under the mist.
+   - A/B, same route and times, `RECOMP_MTL_SKIP_TEX=8277F000` (new dev aid: drop every draw that samples that texture,
+     here the receiver passes that sample the 256x256 shadow map): the dark shapes go and nothing else changes
+     (`pt3_shadow_receivers_on_off_train.png`: train corridor, luggage car entry, Flipendo; `pt3_hall_receivers_on_off_aodebug.png`:
+     SaveGame-0's hall).
+   - The pipeline was checked against xemu (`hw/xbox/nv2a/pgraph/glsl/vsh-ff.c`, `psh.c`): eye-linear texgen dots the
+     model-view position, the texture matrix is applied row by row as here, the receiver combiner is `r0.a = map.a x mask.a`,
+     colour = map colour, blended SRC_ALPHA; map and mask addressing clamp to edge. The mask's closing line lands on row 31
+     (1d), as HP-POA-Xbox-Recomp checked against the console's mask. Casters draw without the depth test into the map
+     whole (dump `pt3`-time `RECOMP_GL_DUMP_AT=58,1 RECOMP_GL_DUMP_SURF=8277F000`: a full silhouette, alpha 0.5).
+   - Not the stencil (xemu audit 5): `[dl]` now prints the stencil state when the test is on (`| st func ref mask op ...`);
+     0 of 1,002 draws in the hall and the train captures have it on. The op-0 mapping was fixed anyway (below).
+   - **AO is not the cause** (the luggage car images predate it). Measured on SaveGame-1's landing with
+     `NFSU2_POST_DEBUG=1`: the occlusion term is a faint crease shade plus one grey patch beside Ron; colour shots with and
+     without AO differ by a few percent. Found on the way, not changed: the AO linearises depth with NFS's near 0.5 / far
+     10000, while PoA projects with near 10 / far ~10010 game units (from the composite matrix: depth 0 at eye z 10) and
+     about 62 units to a metre. `NFSU2_AO_NEAR=0.16 NFSU2_AO_FAR=160` gives metre-true AO: real crease shading, the grey patch
+     lighter, but the picture darker overall (`pt3_ao_term_near05_vs_near016.png`, `pt3_ao_colour_near05_vs_near016.png`).
+     A taste call for the owner, so left as is. Also seen: the scene effects run at the first draw without the depth test,
+     which in PoA is the shadow-map caster pass, so they apply before the transparent effects of the frame.
+   - Not verified against a console: the shadows' strength. xemu's reference frames show no floor shadow at all in the
+     luggage car, while HP-POA-Xbox-Recomp fixed the mask because Harry's shadow showed on walls on PC, which implies the
+     console draws it on floors. If the owner finds them too strong, a "Character Shadows" setting is the honest knob.
+
+2. **Issue 4: geometry in front of the near plane drawn flat over the screen (fixed: clip-range cull).**
+   - The game sets `SET_ZMIN_MAX_CONTROL` = 1 (ZCLAMP_EN = CULL, `[dl]` now prints `zmm`, the clip range and stencil) on
+     its 3D draws, clip range 0..zmax. On the NV2A (xemu `glsl/psh.c` "Depth clipping") a pixel whose depth is outside the
+     clip range is dropped. Here every vertex's z was clamped to [0, w] and Metal clamps depth (MTLDepthClipModeClamp), so
+     a mesh the camera is inside was drawn at depth 0 in front of everything: the cutscene close-up of image 31 (a twin's
+     face filling the screen, 14:07) and, reproduced here, Ron's legs and a wall painting at the camera on the sixth-floor
+     stairs (`build/t/zc_on` vs `zc_off`, `pt3_zcull_off_on_stairs.png`: the near painting and Ron's legs cut away).
+   - Fix (`nv2a_metal_msl.c`, `nv2a_metal.m`): the vertex shader passes the unclamped z and w (`vZw`), the fragment shader
+     drops the pixel when z / w is outside the clip range and the draw's ZCLAMP_EN is CULL (`FsU.u_zcull`; not with the
+     W-buffer). `RECOMP_MTL_ZCULL=0` turns it off. Independent of the per-vertex z clamp (the vis branch removes that).
+   - Checked: train route (title, New Game, corridor, luggage car, Flipendo; `build/t/tr_fin` vs `tr_off`), SaveGame-0/1/2
+     loads, the sixth- and seventh-floor stairs: no missing geometry, HUD and text whole. 133 of the 277 draws of the luggage-car capture use CLAMP
+     (`zmm 10`) and are untouched. The image-31 cutscene itself was not reached by script (14 min into the owner's run).
+
+3. **Other xemu audit items taken here (each behind a flag, A/B on the train route: no visible change, nothing broken):**
+   - Stencil op 0 is ZERO, not KEEP (`stencil_op`, audit 5; `RECOMP_MTL_STENCIL_ZERO=0` off). PoA never enables stencil in
+     the scenes captured.
+   - Alpha test compares the rounded 8-bit alpha (`gl_psh.c`, audit 8; `RECOMP_ATEST_ROUND=0` off).
+   - Fixed-function lighting no longer flips normals that face away from the eye (`lit_color` in `nv2a_pb_exec.c`, audit 3;
+     an X-Men Legends hack the NV2A does not have). `RECOMP_FF_FLIP_NORMALS=1` brings it back; the hall shot changes by a few
+     pixels at Harry's silhouette.
+   - Not done: specular lighting (audit 2: every lit draw has SPECULAR_ENABLE, no specular term is computed), LOD bias
+     (audit 7).
+
+Dev aids added: `RECOMP_MTL_SKIP_TEX=<va>`; `[dl]` prints `zmm`/clip range, the stencil state, and with `RECOMP_DL_TEXGEN`
+the composite's screen position per vertex (`scr`); `RECOMP_DL_TEXGEN=2` prints the texture matrices, composite and
+model-view of every draw (`[dlt]`); `RECOMP_GL_DUMP_SURF` also works with `RECOMP_GL_DUMP_AT`. Test aids (not committed,
+`build/t`): `setup_save.sh <name> [effects]` (the owner's save copies and settings in a test dir), load scripts
+`20000:start,23000:start,40000:lsd,43000:a[,46500:lsd],48500:a` (slot 1 = SaveGame-0, the hall; SaveGame-1/2 = the
+sixth-floor landing), `train2_script.txt` (New Game to Flipendo, skip-logo settings, warm shader cache).
+
 ## 1e. Performance: shader compile stalls (play test 1, issue 3)
 
 The owner's play test (60 fps) showed drops to 51 fps with single frames of 170-600 ms, each logged as
@@ -645,6 +710,7 @@ Dev scripts (inherited): `tools/stubcheck.py` (is any empty stub real code), `to
 - **Play test 1 open items** (1d): Malfoy's orange/blinking face (not reproduced; the dining car not reached by script). The Options "(" glyphs are fixed by a
   hook (1d item 4); whether the console shows them too is not checked.
 - **Renderer** not checked: fog, W-buffer bit of CONTROL0, post-effect thresholds (CoS's).
+- **Play test 3** (1h): character shadow strength vs the console; AO units (near 10 / far 10010) left for the owner; specular lighting missing.
 - **Host pad in scripted tests**: a controller connected to the Mac also drives the overlay during `tools/run_test.sh` runs (one run's
   settings were changed that way); check `[overlay] open` in a test log.
 - **Rumble**: XInputSetState goes to the host pad; not tested with a real pad.
