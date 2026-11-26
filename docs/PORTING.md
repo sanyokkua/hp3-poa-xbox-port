@@ -7,7 +7,7 @@ Sorcerer's Stone port's tree ([hp1-xbox-port](https://github.com/sanyokkua/hp1-x
 shared with those games. Per the HP3-Recompiled notes, this game is **EA UK's engine** (the same family as the PS2 Chamber of
 Secrets), not Eurocom's (CoS) and not Warthog's (HP1).
 
-Status: **0.1.0 (2026-11-25), the first release.** Plays from the logos through the train into Hogwarts (dormitory, sixth floor, library, Defence Against the Dark Arts, the Marauder's Map challenge) at 30 and 60 fps with sound, saves and loads; the owner's play test 4 found no issues. Release checks: section 4.
+Status: **0.1.1 (2026-11-26)**: 0.1.0 plus two renderer fixes (movie frames, full-screen layout); **0.1.0 (2026-11-25), the first release.** Plays from the logos through the train into Hogwarts (dormitory, sixth floor, library, Defence Against the Dark Arts, the Marauder's Map challenge) at 30 and 60 fps with sound, saves and loads; the owner's play test 4 found no issues. Release checks: section 4.
 
 ## Sources (pinned)
 
@@ -848,6 +848,23 @@ After the owner's play test 4 (no issues), at `0961689` plus the release commits
   shot is the stretched drawable (2560x1440 in a window) whatever Picture says, so the game shots are resampled to 1280x960
   (4:3) and the settings shot kept at 1280x720. The library route (`lib_route5`) only works at 30 fps and with the logos: at
   60 fps the same pad times walk Harry up to the seventh floor.
+
+## 0.1.1 (2026-11-26): renderer fixes from the Goblet of Fire port
+
+- **Linear textures hashed in full** (hpgof-xbox-port `8acec1d`, `tex_get`). The `.mad` movie frame is a 512x512 YUY2
+  linear texture (format `0x24`, pitch 1024, va `0x80E23E00`). A temporary diagnostic (sampled vs full hash on every
+  upload check) counted 175 frame changes over the EA, WB and intro movies, 64 of them missed by the sampled
+  `bytes_hash` (41 in the dark WB logo). Shots every 0.2 s (`tools/run_test.sh` with 176 shot times, md5 of a 1/8 5-bit
+  downscale): before, the WB logo repeated for 1.6 s at 5.4 s and again at 8.2 s; after, every shot of its fade in and
+  out changes, and the only repeats left are black frames and the still screen after the logo. Route (Start 55/58 s,
+  A every 4 s 62-118 s, left stick up from 125 s): logos to the Flipendo prompt, 29.6-30.0 fps as in 0.1.0; smoke OK.
+- **Full-screen first frames** (`c5131c0`, `present()`): the frame is laid out in the drawable's own size after
+  `nextDrawable`. Not reproduced here (the first drawable was already 3456x2234 in both builds, first 2.5 s at 0.1 s);
+  taken as the same guard.
+- **`gof-backports` branch left unmerged.** PoA does not import `NtSetTimerEx` (it imports `NtCreateTimer`, `KeSetTimer`,
+  `KeSetTimerEx`), and the branch's SSE lifter work leaves PoA's lift unchanged (918 `RECOMP_UNIMPL`, all in code-shaped
+  data, in both lifts); its disasm changes make `stubcheck.py` stop at `0x21D882` and would need a new seed audit for no
+  measured gain.
 
 ## Pitfalls (each cost a run)
 

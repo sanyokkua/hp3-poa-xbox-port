@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.1 (2026-11-26)
+
+- Movies: the WB logo no longer freezes for up to a second and a half. The renderer checked only a sample of each movie
+  frame for changes and missed many frames of the dark logo; it now checks the whole frame (found in the Goblet of Fire
+  port).
+- Full screen: the frame is laid out in the size of the screen it is drawn to, so the first frames after going full
+  screen can no longer fill only the top-left corner (found in the Goblet of Fire port; not seen on this game, kept as a
+  guard).
+
 ## 0.1.0 (2026-11-25)
 
 First release: the Xbox USA disc of *Harry Potter and the Prisoner of Azkaban*, built on the player's Mac. Played from the
