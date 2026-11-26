@@ -1336,6 +1336,11 @@ static id<MTLTexture> tex_get(uint32_t va, uint32_t color, uint32_t w, uint32_t 
     }
     if (color == 0x0B && !face && !pitch)   /* P8: 1 byte a texel, every one hashed */
         hash = bytes_hash_all(va, w * h);
+    else if (pitch && !face)
+        /* Linear textures are the CPU's (the .mad movies: a 512x512 YUY2 frame, pitch 1024, rewritten each movie
+         * frame). The sampled hash read one dword in 4 KB and missed 64 of the first 175 frame changes, mostly in
+         * the dark WB logo, which then froze for up to 1.6 s (backport of hpgof-xbox-port 8acec1d). */
+        hash = bytes_hash_all(va, pitch * h);
     else
         hash = bytes_hash(va, face ? face * 6 : tex_bytes(color, w, h, pitch));
     if (color == 0x0B)
@@ -4524,6 +4529,11 @@ static void present(MtSurf *s)
     drawable = [s_layer nextDrawable];
     if (!drawable)
         return;
+    /* The frame is laid out in the drawable it goes to: the layer's drawableSize read before nextDrawable can
+     * still be the window's while the drawable is already the full screen's (SDL resizes it on the main thread
+     * as the window goes full screen), and the first frames then filled only the top-left part (backport of
+     * hpgof-xbox-port c5131c0). */
+    ds = CGSizeMake((CGFloat)drawable.texture.width, (CGFloat)drawable.texture.height);
     s_copy_gamma = s_gamma_on;
     s_copy_fxaa = fxaa_on();
     if (s && s_drew_any) {
