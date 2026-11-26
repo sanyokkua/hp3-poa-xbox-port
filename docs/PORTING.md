@@ -865,6 +865,12 @@ After the owner's play test 4 (no issues), at `0961689` plus the release commits
   `KeSetTimerEx`), and the branch's SSE lifter work leaves PoA's lift unchanged (918 `RECOMP_UNIMPL`, all in code-shaped
   data, in both lifts); its disasm changes make `stubcheck.py` stop at `0x21D882` and would need a new seed audit for no
   measured gain.
+- `tests/dmg_no_game_code.sh` now checks 1024 code windows (hpgof-xbox-port `542edbd`; 1003 usable here): a DMG holding a
+  12 KB slice of `.text` fails (4 windows found), the 0.1.1 DMG passes; `publish_check.sh` PASS (605 files).
+- 0.1.1 DMG: `Harry-Potter-Prisoner-of-Azkaban-0.1.1.dmg`, 5.0 MB, SHA-256
+  `1b98f4629d9cd78ac709098d62b4aa830b6d045a4b1b3b583e0562f37db87a8c`. Clean install from the mounted DMG in a throwaway
+  HOME (`HPPOA_NO_UI=1`, USA iso): 3 min 23 s; the installed app over the route above: logos to the Flipendo prompt,
+  29.9-30.0 fps, clean exit at 165 s (no controller attached in this run).
 
 ## Pitfalls (each cost a run)
 
